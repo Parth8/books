@@ -131,7 +131,9 @@ export function createDeck(root, opts) {
   /* ---------------- gestures ---------------- */
 
   root.addEventListener("pointerdown", (e) => {
-    if (e.button > 0 || g) return;
+    if (e.button > 0) return;
+    // A gesture whose finger-up never arrived must not lock the pile: settle it first.
+    if (g) cancel();
     const card = e.target.closest(".card");
     const it = top();
     if (!card || !it || card !== it.el) return;
@@ -204,6 +206,25 @@ export function createDeck(root, opts) {
   };
   root.addEventListener("pointerup", end);
   root.addEventListener("pointercancel", end);
+  root.addEventListener("lostpointercapture", (e) => g && e.pointerId === g.id && cancel());
+
+  /** Drop a gesture without acting on it: everything springs back to where it was. */
+  function cancel() {
+    if (!g) return;
+    clearTimeout(g.hold);
+    const { mode, it } = g;
+    g = null;
+    if (mode === "scrub") opts.onScrubEnd?.(it.id, 0);
+    if (mode === "pull") opts.onPull?.(0);
+    if (mode === "lift") {
+      it.el.classList.remove("lifted");
+      opts.onLift?.(it.id, false);
+      opts.onHover?.(null);
+      hover = null;
+    }
+    opts.onDrag?.(0);
+    layout();
+  }
 
   function swipeMove() {
     const s = g.dx / W;

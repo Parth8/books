@@ -6,20 +6,21 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: npm test
   browser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - run: npm i -g playwright@1.56.1 && npx playwright install --with-deps chromium
-      - run: |
-          python3 -m http.server 8765 &
-          sleep 1
+      - run: npm i -g playwright@1.56.1 && playwright install --with-deps chromium
+      - name: Browser tests
+        run: |
+          python3 -m http.server 8765 > /dev/null 2>&1 &
+          for i in $(seq 1 20); do curl -sf http://localhost:8765/ > /dev/null && break; sleep 0.5; done
           NODE_PATH=$(npm root -g) node tests/app.e2e.mjs

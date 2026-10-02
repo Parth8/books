@@ -26,6 +26,7 @@ async function run(name, fn, { motion = "reduce", google = "ok", allow = null } 
   if (ONLY && !name.includes(ONLY)) return;
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: motion });
   const page = await ctx.newPage();
+  if (process.env.SLOW) await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.SLOW) });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && !(allow && allow.test(m.text())) && errors.push(m.text()));
@@ -120,7 +121,7 @@ await run("swipe left and right flips through the pile", async (page) => {
   await drag(page, await center(topCard(page)), { x: c.x - 200, y: c.y });
   await settle(page);
   assert.equal((await app(page)).top, "add");
-  await drag(page, { x: c.x - 100, y: c.y }, { x: c.x + 150, y: c.y });
+  await drag(page, await center(topCard(page)), { x: c.x + 250, y: c.y });
   await settle(page);
   assert.equal((await app(page)).top, second);
   // Keyboard too.
