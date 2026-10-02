@@ -138,21 +138,6 @@ p {
   display: flex;
   gap: 8px;
 }
-.help {
-  flex: none;
-  width: 40px;
-  height: 40px;
-  border-radius: 14px;
-  background: var(--yellow);
-  color: var(--ink);
-  font: 900 22px/1 var(--display);
-  box-shadow: inset 0 -4px 0 #b99a00;
-  transition: transform 0.2s var(--bounce);
-}
-.help:active {
-  transform: translateY(3px);
-  box-shadow: inset 0 -1px 0 #b99a00;
-}
 .lcd.synced .led {
   background: var(--cyan);
   box-shadow: 0 0 10px var(--cyan);
@@ -953,7 +938,8 @@ body.lifting .stage {
    Dock: the macropad
    ============================================================ */
 .dock {
-  margin: 10px 12px 0;
+  position: relative;
+  margin: 18px 12px 0;
 }
 .pad {
   display: grid;
@@ -1010,11 +996,30 @@ body.lifting .stage {
   --k: #fbf7ee;
   --kd: #cbc1ab;
   --kt: var(--ink);
+  --glow: transparent;
   position: relative;
-  height: 58px;
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--kd) 70%, #000);
+  height: 60px;
+  border-radius: 17px;
+  /* the well the key sits in */
+  background: linear-gradient(180deg, #000 0%, color-mix(in srgb, var(--kd) 55%, #000) 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08);
   padding: 0;
+}
+/* Light under the key: a pre-blurred halo that brightens while you press (GPU only) */
+.key::before {
+  content: "";
+  position: absolute;
+  inset: 8px -4px -8px;
+  border-radius: 20px;
+  background: radial-gradient(closest-side, var(--glow), transparent);
+  opacity: 0.55;
+  transition: opacity 0.35s, transform 0.35s;
+  pointer-events: none;
+}
+.key:active::before,
+.key.pressed::before {
+  opacity: 1;
+  transform: scale(1.12);
 }
 .key .cap {
   position: absolute;
@@ -1024,11 +1029,32 @@ body.lifting .stage {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  border-radius: 15px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--k) 85%, #fff), var(--k));
+  border-radius: 16px;
+  /* a dished top: brighter in the middle, darker toward the rim, with a glossy streak */
+  background:
+    radial-gradient(120% 70% at 50% 0%, rgba(255, 255, 255, 0.45), transparent 55%),
+    radial-gradient(90% 90% at 50% 45%, color-mix(in srgb, var(--k) 92%, #fff), var(--k) 70%, color-mix(in srgb, var(--k) 82%, #000));
   color: var(--kt);
-  box-shadow: 0 6px 0 var(--kd), inset 0 2px 0 rgba(255, 255, 255, 0.55), inset 0 -3px 8px rgba(0, 0, 0, 0.08);
-  transition: transform 0.12s, box-shadow 0.12s;
+  box-shadow:
+    0 7px 0 var(--kd),
+    0 9px 14px rgba(0, 0, 0, 0.45),
+    inset 0 2px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -4px 8px color-mix(in srgb, var(--kd) 45%, transparent);
+  /* down quickly, back up with a little bounce */
+  transition: transform 0.32s cubic-bezier(.3, 1.6, .5, 1), box-shadow 0.32s cubic-bezier(.3, 1.6, .5, 1);
+}
+.key .cap::after {
+  /* the glossy streak, like the translucent caps on the moodboard */
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 12%;
+  width: 46%;
+  height: 26%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0));
+  opacity: 0.55;
+  pointer-events: none;
 }
 .key b {
   font: 900 22px/1 var(--display);
@@ -1040,15 +1066,28 @@ body.lifting .stage {
 }
 .key:active .cap,
 .key.pressed .cap {
-  transform: translateY(5px);
-  box-shadow: 0 1px 0 var(--kd), inset 0 2px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 6px rgba(0, 0, 0, 0.12);
+  transform: translateY(6px);
+  box-shadow: 0 1px 0 var(--kd), 0 2px 4px rgba(0, 0, 0, 0.4), inset 0 2px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 6px rgba(0, 0, 0, 0.12);
+  transition-duration: 0.08s;
+  transition-timing-function: ease-out;
 }
 .k-cream { --k: #fbf7ee; --kd: #cbc1ab; }
-.k-blue { --k: #2b3bff; --kd: #1a24a8; --kt: #fff; }
-.k-yellow { --k: #ffd60a; --kd: #b99a00; }
-.k-red { --k: #d91d16; --kd: #8f0f0a; --kt: #fff; }
-.k-pink { --k: #ff6ad5; --kd: #b53e98; --kt: #0d0d0d; }
-.k-lime { --k: #e7ff3d; --kd: #9fb000; --kt: #0d0d0d; }
+.k-blue { --k: #2b3bff; --kd: #1a24a8; --kt: #fff; --glow: rgba(70, 90, 255, 0.85); }
+.k-yellow { --k: #ffd60a; --kd: #b99a00; --glow: rgba(255, 214, 10, 0.7); }
+.k-red { --k: #d91d16; --kd: #8f0f0a; --kt: #fff; --glow: rgba(255, 50, 40, 0.8); }
+.k-pink { --k: #ff6ad5; --kd: #b53e98; --kt: #0d0d0d; --glow: rgba(255, 106, 213, 0.8); }
+.k-lime { --k: #e7ff3d; --kd: #9fb000; --kt: #0d0d0d; --glow: rgba(231, 255, 61, 0.8); }
+/* Jelly keys: the blue and lime caps look lit from inside */
+.k-blue .cap,
+.k-lime .cap,
+.k-pink .cap {
+  box-shadow:
+    0 7px 0 var(--kd),
+    0 9px 14px rgba(0, 0, 0, 0.45),
+    0 0 18px color-mix(in srgb, var(--glow) 55%, transparent),
+    inset 0 2px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -6px 12px color-mix(in srgb, var(--kd) 60%, transparent);
+}
 .k-dark { --k: #1e1e1e; --kd: #000; --kt: #e7ff3d; }
 .k-glass {
   --k: #f4f7fb;
@@ -1165,14 +1204,13 @@ body.lifting .stage {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(0, 0, 0, 0.66);
+  background: rgba(5, 5, 5, 0.78);
   opacity: 0;
   pointer-events: none;
+  will-change: opacity;
 }
-.shade.on {
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-}
+/* No live blur behind panels: blurring a screen full of moving things every frame is what made
+   pulling Stats up stutter. A deep dim reads just as well. */
 .panel {
   position: fixed;
   left: 0;
@@ -1880,7 +1918,7 @@ body.lifting .stage {
   font: 900 min(31vw, 168px) / 0.84 var(--display);
   font-stretch: 62%;
   letter-spacing: -0.01em;
-  animation: slam 0.7s cubic-bezier(0.2, 1.4, 0.4, 1) calc(var(--k) * 110ms + 120ms) both;
+  animation: slam 0.95s cubic-bezier(0.22, 1.3, 0.36, 1) calc(var(--k) * 150ms + 160ms) both;
 }
 @keyframes slam {
   from { transform: translateY(105%) skewY(10deg); }
@@ -2585,14 +2623,30 @@ body.party .stage {
   transform: rotate(-6deg);
 }
 .pop-icon.danger {
+  position: relative;
   background: #ff1f3d;
   color: #fff;
   font-size: 38px;
-  animation: danger-glow 1.6s ease-in-out infinite;
+  animation: danger-throb 1.8s ease-in-out infinite;
+}
+/* The glow is a pre-blurred layer that only fades and grows: the GPU does it all. */
+.pop-icon.danger::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  z-index: -1;
+  border-radius: 30px;
+  background: radial-gradient(closest-side, rgba(255, 31, 61, 0.85), rgba(255, 31, 61, 0));
+  animation: danger-glow 1.8s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+@keyframes danger-throb {
+  0%, 100% { transform: rotate(-6deg) scale(1); }
+  50% { transform: rotate(-3deg) scale(1.07); }
 }
 @keyframes danger-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 31, 61, 0.65), 0 0 18px 2px rgba(255, 31, 61, 0.5); transform: rotate(-6deg) scale(1); }
-  50% { box-shadow: 0 0 0 10px rgba(255, 31, 61, 0), 0 0 34px 10px rgba(255, 31, 61, 0.75); transform: rotate(-3deg) scale(1.07); }
+  0%, 100% { opacity: 0.45; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.25); }
 }
 .pop-title {
   font: 900 38px/0.9 var(--display);
@@ -3052,9 +3106,9 @@ body.party .stage {
   30% { transform: translateY(-10px) rotate(-2deg); }
   60% { transform: translateY(2px) rotate(1deg); }
 }
-.knob-ring.fidget { animation: ring-glow 1.4s ease-in-out; }
+.knob-ring.fidget { animation: ring-glow 1.6s cubic-bezier(.3, 1.4, .5, 1); }
 @keyframes ring-glow {
-  50% { box-shadow: 0 0 0 6px rgba(124, 92, 255, 0.35), 0 0 28px rgba(124, 92, 255, 0.8); }
+  40% { transform: scale(1.08); opacity: 1; }
 }
 
 /* The cover on top drifts slowly (Ken Burns), for good: individual transform properties on
@@ -3408,3 +3462,446 @@ body.party .stage {
 }
 .link-btn.danger { color: #b3160e; opacity: 1; }
 .t-account:not(.on) .link-btn.danger { color: #ff6b7e; }
+
+
+/* ============================================================
+   Panels hold the stage still
+   ============================================================ */
+.panel-up .stage-word,
+.panel-up .led,
+.panel-up .stamp *,
+.panel-up .critter-body,
+.panel-up .fairy i,
+.panel-up .neon-sign::after {
+  animation-play-state: paused !important;
+}
+
+/* ============================================================
+   You: the avatar button and the ME panel
+   ============================================================ */
+.me-btn {
+  position: relative;
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 35% 30%, #fff8 0 10%, transparent 34%), linear-gradient(160deg, #ff8ae0, #c935ab);
+  color: #0d0d0d;
+  font: 900 22px/1 var(--display);
+  box-shadow: 0 5px 0 #7d1f6a, 0 0 18px rgba(255, 106, 213, 0.45), inset 0 -3px 6px rgba(0, 0, 0, 0.25);
+  border: 2px solid #0d0d0d;
+  transition: transform 0.25s var(--bounce), box-shadow 0.25s;
+}
+.me-btn:active {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 #7d1f6a, 0 0 10px rgba(255, 106, 213, 0.3), inset 0 -2px 4px rgba(0, 0, 0, 0.25);
+}
+.me-btn.warn::after {
+  /* no backup yet: a small orange dot that breathes */
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--orange);
+  border: 2px solid #0d0d0d;
+  animation: dot-breathe 2.4s ease-in-out infinite;
+}
+@keyframes dot-breathe {
+  50% { transform: scale(1.25); }
+}
+.me-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 4px 2px 6px;
+}
+.me-avatar {
+  flex: none;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font: 900 42px/1 var(--display);
+  color: #0d0d0d;
+  background: radial-gradient(circle at 35% 28%, #fff9 0 12%, transparent 36%), linear-gradient(160deg, #ff8ae0, #c935ab);
+  border: 3px solid #0d0d0d;
+  box-shadow: 0 7px 0 #7d1f6a, 0 0 30px rgba(255, 106, 213, 0.45);
+}
+.me-avatar:active { transform: translateY(5px); box-shadow: 0 2px 0 #7d1f6a; }
+.me-id {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.me-id b {
+  font: 900 34px/0.9 var(--display);
+  font-stretch: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.me-id small {
+  font: 9px/1.2 var(--pixel);
+  color: var(--lime);
+  letter-spacing: 0.06em;
+}
+.me-id .link-btn { padding: 4px 0; color: #bbb; }
+.p-h.danger { color: #ff4d63; }
+
+.safe-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+  padding: 6px;
+  border-radius: 22px;
+  background: #141414;
+  border: 1px solid #2a2a2a;
+}
+.safe-line {
+  display: grid;
+  grid-template-columns: 10px 28px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px;
+}
+.safe-line b {
+  display: block;
+  font: 900 18px/1 var(--display);
+  font-stretch: 70%;
+}
+.safe-line small {
+  display: block;
+  margin-top: 3px;
+  font: 400 11px/1.35 var(--mono);
+  color: #b5b5b5;
+}
+.safe-icon { font-size: 22px; }
+.safe-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--lime);
+  box-shadow: 0 0 10px var(--lime);
+}
+.safe-line.warn .safe-dot {
+  background: var(--orange);
+  box-shadow: 0 0 10px var(--orange);
+  animation: dot-breathe 2.4s ease-in-out infinite;
+}
+.safe-line.warn b { color: var(--orange); }
+
+.me-rows {
+  display: flex;
+  flex-direction: column;
+  border-radius: 22px;
+  overflow: hidden;
+  border: 1px solid #2a2a2a;
+  background: #141414;
+}
+.me-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 14px;
+  text-align: left;
+  color: #fff;
+  transition: background 0.2s;
+}
+.me-row + .me-row { border-top: 1px solid #242424; }
+.me-row:active { background: #1f1f1f; }
+.me-row-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font: 900 20px/1 var(--display);
+  background: #222;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.45), inset 0 2px 0 rgba(255, 255, 255, 0.06);
+}
+.me-row-text b {
+  display: block;
+  font: 900 19px/1 var(--display);
+  font-stretch: 70%;
+}
+.me-row-text small {
+  display: block;
+  margin-top: 4px;
+  font: 400 11px/1.4 var(--mono);
+  color: #a8a8a8;
+}
+.me-row-go {
+  font: 900 26px/1 var(--display);
+  color: #555;
+}
+/* A pill switch: the knob slides, the track lights up */
+.switch {
+  position: relative;
+  width: 52px;
+  height: 30px;
+  border-radius: 15px;
+  background: #2c2c2c;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+  transition: background 0.3s;
+}
+.switch i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #c9c9c9);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.45s cubic-bezier(.3, 1.5, .5, 1);
+}
+.switch.on {
+  background: var(--lime);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25), 0 0 14px rgba(231, 255, 61, 0.45);
+}
+.switch.on i { transform: translateX(22px); }
+
+/* ============================================================
+   Arcade levers
+   ============================================================ */
+.levers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.lever {
+  --pull: 0;
+  --tone: #ff1f3d;
+  --tone-dark: #8f0f0a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 10px 14px;
+  border-radius: 24px;
+  background: #141414;
+  border: 1px solid #2a2a2a;
+  color: #fff;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.lever.tone-violet { --tone: #8d6bff; --tone-dark: #45309c; }
+.lever-base {
+  position: relative;
+  width: 74px;
+  height: 120px;
+}
+.lever-slot {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 6px;
+  width: 22px;
+  margin-left: -11px;
+  border-radius: 11px;
+  background: #050505;
+  box-shadow: inset 0 3px 6px #000, 0 1px 0 #333;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  align-items: center;
+}
+.lever-slot i {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  background: #3a3a3a;
+}
+.lever-arm {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform: translateY(calc(var(--pull) * 82px));
+}
+.lever-stick {
+  position: absolute;
+  left: -4px;
+  top: 18px;
+  width: 8px;
+  height: 22px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #888, #eee 40%, #777);
+}
+.lever-ball {
+  position: absolute;
+  left: -24px;
+  top: -14px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #fff 0 9%, transparent 28%), radial-gradient(circle at 50% 60%, var(--tone), var(--tone-dark));
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.55), 0 0 calc(10px + var(--pull) * 26px) color-mix(in srgb, var(--tone) 70%, transparent);
+  transition: scale 0.25s var(--bounce);
+}
+.lever.held .lever-ball { scale: 1.08; }
+.lever.fired .lever-ball { animation: lever-flash 0.26s steps(2) 2; }
+@keyframes lever-flash {
+  50% { filter: brightness(1.8); }
+}
+.lever-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.lever-text b {
+  font: 900 20px/1 var(--display);
+  font-stretch: 70%;
+  color: var(--tone);
+}
+.lever-text small {
+  font: 8px/1.3 var(--pixel);
+  color: #9a9a9a;
+  letter-spacing: 0.05em;
+}
+
+
+/* ============================================================
+   Arcade: round buttons, fairy lights, neon
+   ============================================================ */
+/* The +pages keys are round arcade buttons: a bezel ring and a domed cap */
+.keys.round .key {
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, #2a2a2a, #050505 70%);
+  box-shadow: 0 0 0 3px #0d0d0d, 0 0 0 5px color-mix(in srgb, var(--kd) 70%, #fff), 0 6px 10px rgba(0, 0, 0, 0.45);
+}
+.keys.round .key .cap {
+  inset: 5px 5px 11px;
+  border-radius: 50%;
+}
+.keys.round .key .cap::after {
+  left: 22%;
+  width: 40%;
+  height: 22%;
+  top: 9%;
+}
+.keys.round .key::before { inset: 14px 0 -10px; border-radius: 50%; }
+.keys.round .key b { font-size: 21px; }
+
+/* A ▶ on START */
+.play-tri {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-left: 6px;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 11px solid currentColor;
+  vertical-align: -1px;
+}
+
+/* Fairy lights strung across the top of the macropad. Each bulb only fades (cheap), at its
+   own pace; on big moments they chase. */
+.fairy {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: -16px;
+  height: 26px;
+  pointer-events: none;
+  z-index: 2;
+}
+.fairy svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.fairy path {
+  fill: none;
+  stroke: #3a3a3a;
+  stroke-width: 1.5;
+}
+.fairy i {
+  position: absolute;
+  top: var(--y);
+  left: var(--x);
+  width: 9px;
+  height: 12px;
+  margin: -2px 0 0 -4.5px;
+  border-radius: 50% 50% 45% 45%;
+  background: var(--c);
+  box-shadow: 0 0 8px 2px var(--c);
+  opacity: 0.35;
+  animation: twinkle var(--d) ease-in-out var(--delay) infinite alternate;
+  will-change: opacity;
+}
+.fairy i::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 2.5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: #555;
+}
+@keyframes twinkle {
+  0% { opacity: 0.25; }
+  70% { opacity: 1; }
+  100% { opacity: 0.9; }
+}
+.fairy.chase i {
+  animation: chase 0.5s steps(1) calc(var(--n) * 50ms) 6;
+}
+@keyframes chase {
+  0% { opacity: 1; }
+  50% { opacity: 0.15; }
+}
+
+/* Neon: the shelf you're on hums like a sign, and now and then it flickers */
+.tape-item[aria-selected="true"] b {
+  position: relative;
+  text-shadow: 0 0 2px #fff, 0 0 10px color-mix(in srgb, var(--neon, #e7ff3d) 80%, transparent), 0 0 24px color-mix(in srgb, var(--neon, #e7ff3d) 60%, transparent);
+  will-change: opacity;
+  animation: neon-flicker 7s steps(1) infinite;
+}
+@keyframes neon-flicker {
+  0%, 91%, 93%, 96%, 100% { opacity: 1; }
+  92% { opacity: 0.45; }
+  94% { opacity: 0.75; }
+  95% { opacity: 0.35; }
+}
+.install-actions.two { flex-direction: row; }
+.install-actions.two > * { flex: 1; font-size: 15px; }
+.explain {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.explain-row {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  align-items: start;
+  gap: 8px;
+  font: 400 13px/1.45 var(--mono);
+}
+.explain-row span:first-child {
+  font-size: 24px;
+  line-height: 1;
+}
+.levers {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}

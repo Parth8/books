@@ -120,7 +120,8 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
     if (calm < 20) run();
     // At rest the surface only ripples gently, so 25 frames a second is plenty. Waiting on a
     // timer (not skipping frames) lets the browser itself idle between them.
-    else if (!reduced && document.visibilityState === "visible" && lvl.value > 0.001) idle();
+    // (It also rests while a panel covers the stage.)
+    else if (!reduced && document.visibilityState === "visible" && lvl.value > 0.001 && !document.body.classList.contains("panel-up")) idle();
   }
 
   function run() {
@@ -166,6 +167,8 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
       color = c;
       run();
     },
+    /** Pick the idle ripple back up (after a panel closes). */
+    wake: () => run(),
     destroy() {
       alive = false;
       ro.disconnect();

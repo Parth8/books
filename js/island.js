@@ -74,7 +74,7 @@ export function createIsland() {
         ],
         { duration: 620, easing: SPRING },
       );
-      inner.animate([{ opacity: 0, filter: "blur(6px)", transform: "scale(0.9)" }, { opacity: 1, filter: "none", transform: "none" }], { duration: 380, delay: 160, easing: EASE, fill: "backwards" });
+      inner.animate([{ opacity: 0, transform: "scale(0.92) translateY(4px)" }, { opacity: 1, transform: "none" }], { duration: 480, delay: 160, easing: EASE, fill: "backwards" });
       icon.animate([{ transform: "scale(0) rotate(-40deg)" }, { transform: "scale(1.35) rotate(10deg)", offset: 0.6 }, { transform: "none" }], { duration: 640, delay: 180, easing: EASE, fill: "backwards" });
       await a.finished.catch(() => {});
     }
@@ -91,7 +91,7 @@ export function createIsland() {
 
     if (!reduced) {
       const now = el.getBoundingClientRect();
-      inner.animate([{ opacity: 1 }, { opacity: 0, filter: "blur(4px)" }], { duration: 160, fill: "forwards" });
+      inner.animate([{ opacity: 1 }, { opacity: 0, transform: "scale(0.96)" }], { duration: 200, fill: "forwards" });
       await el
         .animate(
           [

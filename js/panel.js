@@ -11,8 +11,9 @@ export function createPanel(el, { handles = [], onOpen, onClose, onProgress } = 
   let H = innerHeight;
   let isOpen = false;
   const y = new Spring(1, {
-    stiffness: 380,
-    damping: 36,
+    // Smooth rather than snappy: about a third of a second, no wobble.
+    stiffness: 210,
+    damping: 27,
     onChange: (v) => {
       el.style.transform = `translate3d(0, ${(v * H).toFixed(1)}px, 0)`;
       const p = Math.max(0, Math.min(1, 1 - v));

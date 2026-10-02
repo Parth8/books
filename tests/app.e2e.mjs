@@ -66,6 +66,8 @@ async function setup(page, { google = "ok", tour = false, tips = false, store = 
     ([tips, ids]) => {
       if (!tips && !localStorage.getItem("shelfie.tips")) localStorage.setItem("shelfie.tips", JSON.stringify(ids));
       if (!localStorage.getItem("shelfie.fx")) localStorage.setItem("shelfie.fx", JSON.stringify({ visitors: false }));
+      // No random jackpots in tests (they'd change the XP being checked).
+      localStorage.setItem("shelfie.jackpot", String(Date.now() + 1e12));
       if (!localStorage.getItem("shelfie.a2hs")) localStorage.setItem("shelfie.a2hs", JSON.stringify({ n: 2, at: Date.now() }));
     },
     [tips, TIPS],
@@ -154,7 +156,8 @@ async function starter(page) {
 }
 async function dismissPosters(page) {
   for (let i = 0; i < 4 && (await page.locator(".poster").count()); i++) {
-    await page.locator(".poster").first().press("Escape");
+    // (A poster can also leave on its own between the check and the key press.)
+    await page.locator(".poster").first().press("Escape", { timeout: 2000 }).catch(() => {});
     await settle(page, 250);
   }
 }
@@ -474,7 +477,8 @@ await run("first launch: the tour teaches each gesture, and remembers it was see
   assert.equal(await page.locator(".tour").count(), 0, "not shown again");
   assert.equal(await page.locator(".pop").count(), 0, "no onboarding pop-ups again");
   assert.match(await page.textContent("#lcd"), /HI ADA/);
-  await page.click("#help");
+  await page.click("#me");
+  await page.click('.me-row[aria-label="HOW TO USE"]');
   await page.click('.pop-btn[data-id="tour"]');
   await page.waitForSelector(".tour");
   await page.click(".tour-skip");
@@ -535,7 +539,7 @@ await run("sync: Safari and the home-screen app share one set of shelves", async
   const app = await open();
   try {
   await starter(safari.page);
-  await safari.page.click("#pullbar");
+  await safari.page.click("#me");
   await safari.page.click('#sync-tile .key:has-text("ON")');
   await safari.page.waitForFunction(() => /SYNCED/.test(document.querySelector("#sync-tile")?.textContent || ""));
   const code = await safari.page.evaluate(() => JSON.parse(localStorage.getItem("shelfie.sync")).code);
@@ -544,26 +548,26 @@ await run("sync: Safari and the home-screen app share one set of shelves", async
   assert.ok(!JSON.stringify(stored).includes(code), "the code never reaches the server");
 
   // The app links with the code (typed messily) and gets everything.
-  await app.page.click("#pullbar");
+  await app.page.click("#me");
   await app.page.click('#sync-tile .key:has-text("I HAVE A CODE")');
   await app.page.fill("#sync-code", code.toLowerCase().match(/.{1,4}/g).join(" "));
   await app.page.click('#sync-tile .key:has-text("LINK")');
   await app.page.waitForFunction(() => globalThis.__shelfie.state.books.length === 8);
 
   // Read in the app; Safari picks it up.
-  await app.page.click("#panel-stats [data-close]");
+  await app.page.click("#panel-me [data-close]");
   await app.page.waitForTimeout(300);
   const dune = (await state(app.page)).books.find((b) => b.title === "Dune");
   await goTo(app.page, dune.id);
   await app.page.click('.dock .key[aria-label="Add 10 pages"]');
   await app.page.waitForFunction((id) => globalThis.__shelfie.state.books.find((b) => b.id === id).page === 222, dune.id);
-  await app.page.waitForTimeout(3000); // the app syncs a moment after a change
+  await app.page.evaluate(() => globalThis.__shelfie.backupNow()); // (on its own it saves once things go quiet)
   await safari.page.click('#sync-tile .key:has-text("SYNC NOW")');
   await safari.page.waitForFunction((id) => globalThis.__shelfie.state.books.find((b) => b.id === id).page === 222, dune.id);
 
   // A wrong code is refused without touching anything.
   const third = await open();
-  await third.page.click("#pullbar");
+  await third.page.click("#me");
   await third.page.click('#sync-tile .key:has-text("I HAVE A CODE")');
   await third.page.fill("#sync-code", "not a code");
   await third.page.click('#sync-tile .key:has-text("LINK")');
@@ -576,27 +580,37 @@ await run("sync: Safari and the home-screen app share one set of shelves", async
 }, { raw: true });
 
 await run("sound and haptics can be switched off, and stay off", async (page) => {
-  await page.click("#pullbar");
-  await page.click('.key[aria-label="sound"]');
-  await page.click('.key[aria-label="haptics"]');
+  await page.click("#me");
+  await page.click('.me-row[aria-label="SOUND"]');
+  await page.click('.me-row[aria-label="HAPTICS"]');
   const fxp = await page.evaluate(() => JSON.parse(localStorage.getItem("shelfie.fx")));
   assert.equal(fxp.sound, false);
   assert.equal(fxp.haptics, false);
-  assert.equal(await page.getAttribute('.key[aria-label="sound"]', "aria-pressed"), "false");
+  assert.equal(await page.getAttribute('.me-row[aria-label="SOUND"]', "aria-checked"), "false");
 });
 
-await run("reset asks twice, needs 'reset' typed, then wipes everything", async (page) => {
+await run("reset: pull the lever, type 'reset', and everything's wiped", async (page) => {
   await starter(page);
   await dismissPosters(page);
   assert.ok((await state(page)).books.length > 0);
-  await page.click("#pullbar");
-  await page.click('.key[aria-label="Reset all data"]');
-  // "No" leaves everything alone.
-  await page.click('.pop-btn[data-id="no"]');
+  await page.click("#me");
+  // Let go of the lever early: it springs back and nothing happens.
+  const lever = page.locator(".lever").first();
+  await lever.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  const box = await lever.locator(".lever-ball").boundingBox();
+  await drag(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, { x: box.x + box.width / 2, y: box.y + 30 }, { steps: 6 });
+  await page.waitForTimeout(600);
+  assert.equal(await page.locator(".pop").count(), 0);
+  // Pull it all the way.
+  const b2 = await lever.locator(".lever-ball").boundingBox();
+  await drag(page, { x: b2.x + b2.width / 2, y: b2.y + b2.height / 2 }, { x: b2.x + b2.width / 2, y: b2.y + 160 }, { steps: 10 });
+  await page.waitForSelector(".pop-card.is-danger");
+  // Cancel leaves everything alone.
+  await page.click('.pop-btn[data-id="cancel"]');
   await page.waitForSelector(".pop", { state: "detached" });
   assert.ok((await state(page)).books.length > 0);
-  await page.click('.key[aria-label="Reset all data"]');
-  await page.click('.pop-btn[data-id="yes"]');
+  await lever.press("Enter"); // the keyboard pulls it too
   await page.waitForSelector(".pop-card.is-danger");
   assert.match(await page.textContent(".danger-text"), /gone for good/);
   assert.ok(await page.isDisabled('.pop-btn[data-id="reset"]'), "can't delete until 'reset' is typed");
@@ -668,7 +682,7 @@ await run("accounts: sign up, save the recovery code, log in on another device, 
   const b = await device(env);
   try {
     await starter(a.page);
-    await a.page.click("#pullbar");
+    await a.page.click("#me");
     await a.page.waitForSelector("#account-tile");
     assert.equal(await a.page.locator("#sync-tile").count(), 0, "with accounts on, the sync code steps aside");
     await a.page.click('#account-tile .key[aria-label="Create an account"]');
@@ -697,7 +711,7 @@ await run("accounts: sign up, save the recovery code, log in on another device, 
     for (const leak of ["ada.reads", "tea and long books", "Dune", "Hitchhiker", code]) assert.ok(!dump.includes(leak), `server has ${leak}`);
 
     // Another device: a wrong password stays in the pop-up with a message; the right one brings the books.
-    await b.page.click("#pullbar");
+    await b.page.click("#me");
     await b.page.click('#account-tile .key[aria-label="Log in"]');
     await b.page.fill('.pop input[name="login"]', "ada.reads");
     await b.page.fill('.pop input[name="password"]', "tea and short books");
@@ -730,7 +744,7 @@ await run("accounts: forgot password with the recovery code, then log out and cl
   const a = await device(env);
   try {
     await starter(a.page);
-    await a.page.click("#pullbar");
+    await a.page.click("#me");
     await a.page.click('#account-tile .key[aria-label="Create an account"]');
     await a.page.fill('.pop input[name="login"]', "grace@example.com");
     await a.page.fill('.pop input[name="password"]', "compilers are fun");
@@ -759,7 +773,7 @@ await run("accounts: forgot password with the recovery code, then log out and cl
     await a.page.reload();
     await a.page.waitForFunction(() => globalThis.__shelfie?.state.resetAt > 0);
     // Forgot the password: the recovery code sets a new one and the books come back.
-    await a.page.click("#pullbar");
+    await a.page.click("#me");
     await a.page.click('#account-tile .link-btn:has-text("FORGOT")');
     await a.page.fill('.pop input[name="login"]', "Grace@Example.com");
     await a.page.fill('.pop input[name="code"]', code.toLowerCase().replace(/-/g, " "));
@@ -770,6 +784,32 @@ await run("accounts: forgot password with the recovery code, then log out and cl
     assert.deepEqual(a.errors, []);
   } finally {
     await a.ctx.close();
+  }
+}, { raw: true });
+
+await run("first launch with accounts: after the name, it explains keeping books safe", async () => {
+  const env = accountsEnv(true);
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+  const page = await ctx.newPage();
+  try {
+    await setup(page, { tour: true, accounts: env });
+    await page.goto(SITE);
+    await page.waitForSelector(".tour");
+    await page.click(".tour-skip");
+    await page.waitForSelector(".pop-input");
+    await page.fill(".pop-input", "Mo");
+    await page.click('.pop-btn[data-id="ok"]');
+    await page.waitForSelector('.pop-btn[data-id="signup"]');
+    assert.match(await page.textContent(".pop-card"), /KEEP YOUR BOOKS SAFE/);
+    assert.match(await page.textContent(".pop-card"), /recovery code/);
+    await page.click('.pop-btn[data-id="later"]');
+    // Then the Goodreads offer (with a log-in option, since accounts are on).
+    await page.waitForSelector('.pop-btn[data-id="gr"]');
+    assert.equal(await page.locator('.pop-btn[data-id="sync"]').count(), 1);
+    await page.click('.pop-btn[data-id="later"]');
+    await page.waitForSelector(".pop", { state: "detached" });
+  } finally {
+    await ctx.close();
   }
 }, { raw: true });
 

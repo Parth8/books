@@ -32,8 +32,8 @@ export function poster({ lines, kicker = "", sub = "", tone = "#2b3bff", ink = "
   buzz([20, 60, 30, 60, 40]);
   if (emoji) rain({ count: 180, emoji });
 
-  const y = new Spring(0, { stiffness: 300, damping: 30, onChange: (v) => (el.style.transform = `translate3d(0, ${v}px, 0)`) });
-  const x = new Spring(0, { stiffness: 300, damping: 30, onChange: (v) => (el.style.translate = `${v}px 0`) });
+  const y = new Spring(0, { stiffness: 200, damping: 24, onChange: (v) => (el.style.transform = `translate3d(0, ${v}px, 0)`) });
+  const x = new Spring(0, { stiffness: 200, damping: 24, onChange: (v) => (el.style.translate = `${v}px 0`) });
   if (!prefersReducedMotion()) {
     el.animate([{ clipPath: "circle(0% at 50% 50%)" }, { clipPath: "circle(150% at 50% 50%)" }], { duration: 650, easing: "cubic-bezier(.7,0,.2,1)" });
   }

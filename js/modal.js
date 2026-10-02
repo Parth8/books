@@ -113,8 +113,8 @@ function show({ tone = "lime", icon = null, title = "", text = "", body = null, 
     if (app) app.inert = true;
     feel(sound, danger ? "warning" : "light");
     if (!prefersReducedMotion()) {
-      card.animate([{ transform: "scale(.6) rotate(-6deg)", opacity: 0 }, { transform: "scale(1.04) rotate(1deg)", opacity: 1, offset: 0.6 }, { transform: "none", opacity: 1 }], { duration: 520, easing: "cubic-bezier(.2,1.4,.4,1)" });
-      wrap.firstChild.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240 });
+      card.animate([{ transform: "scale(.6) rotate(-6deg)", opacity: 0 }, { transform: "scale(1.04) rotate(1deg)", opacity: 1, offset: 0.6 }, { transform: "none", opacity: 1 }], { duration: 720, easing: "cubic-bezier(.22,1.25,.36,1)" });
+      wrap.firstChild.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 360, easing: "ease-out" });
     }
 
     const primary = actions.find((a) => a.primary) || actions[actions.length - 1];
@@ -172,8 +172,8 @@ function show({ tone = "lime", icon = null, title = "", text = "", body = null, 
         resolve(fields ? { id, values: values(), result } : input ? { id, value } : id);
       };
       if (prefersReducedMotion()) return finish();
-      card.animate([{ transform: "none", opacity: 1 }, { transform: "scale(.85) translateY(20px)", opacity: 0 }], { duration: 200, easing: "ease-in", fill: "forwards" });
-      wrap.firstChild.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: "forwards" }).finished.then(finish, finish);
+      card.animate([{ transform: "none", opacity: 1 }, { transform: "scale(.85) translateY(20px)", opacity: 0 }], { duration: 280, easing: "cubic-bezier(.4,0,.7,.2)", fill: "forwards" });
+      wrap.firstChild.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, fill: "forwards" }).finished.then(finish, finish);
     };
     for (const b of buttons) b.addEventListener("click", () => close(b.dataset.id));
     // Content inside the pop-up (a button in its body) can close it with an id of its own.

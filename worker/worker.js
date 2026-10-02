@@ -20,9 +20,15 @@
  *   POST /api/auth/password         { auth, salt, kdf, newAuth, wrapped } (Bearer) → { token }
  *   POST /api/auth/recover/begin    { login }                      → { rwrapped }
  *   POST /api/auth/recover          { login, rauth, salt, kdf, auth, wrapped } → { token }
+ *   POST /api/auth/recovery         { auth, rauth, rwrapped } (Bearer) → { ok }   (a new recovery code)
  *   POST /api/auth/delete           { auth }            (Bearer)   → { ok }
  *   GET  /api/vault                                     (Bearer)   → { rev, iv, ct } or { rev: 0 }
- *   PUT  /api/vault                 { iv, ct, base }    (Bearer)   → { rev } or 409 with the current copy
+ *   PUT  /api/vault                 { iv, ct, base, op } (Bearer)  → { rev } or 409 with the current copy
+ *
+ * Costs (D1 bills rows read and rows written): a backup read is 2 rows read; a backup save is
+ * 2 rows read + 1 row written. Saves are only made when something changed, a few seconds after
+ * a burst of changes, so an active reader writes a handful of rows a day. Rate limits for saves
+ * live in memory (no database writes); only sign-in routes keep durable counters.
  *
  * Sync: the browser encrypts the shelves (AES-256-GCM) with a key derived from a sync code
  * that never leaves the user's devices. <id> is a SHA-256 hash of that code. This Worker only
@@ -89,7 +95,7 @@ export default {
     try {
       const path = url.pathname;
       const syncId = /^\/api\/sync\/([0-9a-f]{64})$/.exec(path)?.[1];
-      const authRoute = /^\/api\/auth\/(prelogin|signup|login|logout|password|recover\/begin|recover|delete)$/.exec(path)?.[1];
+      const authRoute = /^\/api\/auth\/(prelogin|signup|login|logout|password|recovery|recover\/begin|recover|delete)$/.exec(path)?.[1];
       const allowed_ =
         request.method === "GET" ||
         (request.method === "PUT" && (syncId || path === "/api/vault")) ||
@@ -286,9 +292,8 @@ const LIMITS = {
   recoverBegin: [["ip", 10, 3600], ["login", 5, 3600]],
   recover: [["ip", 10, 3600], ["login", 5, 3600]],
   password: [["user", 10, 3600]],
+  recovery: [["user", 10, 3600]],
   delete: [["user", 5, 3600]],
-  vaultGet: [["user", 900, 3600]],
-  vaultPut: [["user", 400, 3600]],
 };
 
 const accountsOn = (env) => !!(env.DB && typeof env.DB.prepare === "function" && typeof env.AUTH_SECRET === "string" && env.AUTH_SECRET.length >= 32);
@@ -365,17 +370,28 @@ async function readJson(request, max = 4096) {
   }
 }
 
-const schemaReady = new WeakMap(); // per database binding, created once per isolate
+const schemaReady = new WeakMap(); // per database binding, checked once per isolate
+
+/**
+ * Makes sure the tables exist. The usual case is one cheap query that reads no rows; the
+ * tables (and any column added since) are only created when that query fails.
+ */
 function schema(db) {
   if (schemaReady.has(db)) return schemaReady.get(db);
   const ready = db
-    .batch([
-      db.prepare("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, salt TEXT NOT NULL, kdf INTEGER NOT NULL, auth TEXT NOT NULL, wrapped TEXT NOT NULL, rauth TEXT NOT NULL, rwrapped TEXT NOT NULL, created INTEGER NOT NULL, fails INTEGER NOT NULL DEFAULT 0, locked INTEGER NOT NULL DEFAULT 0)"),
-      db.prepare("CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, uid TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL)"),
-      db.prepare("CREATE INDEX IF NOT EXISTS sessions_uid ON sessions (uid)"),
-      db.prepare("CREATE TABLE IF NOT EXISTS vaults (uid TEXT PRIMARY KEY, rev INTEGER NOT NULL, iv TEXT NOT NULL, ct TEXT NOT NULL, updated INTEGER NOT NULL)"),
-      db.prepare("CREATE TABLE IF NOT EXISTS hits (k TEXT PRIMARY KEY, win INTEGER NOT NULL, n INTEGER NOT NULL, exp INTEGER NOT NULL)"),
-    ])
+    .prepare("SELECT op FROM vaults LIMIT 0")
+    .all()
+    .catch(async () => {
+      await db.batch([
+        db.prepare("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, salt TEXT NOT NULL, kdf INTEGER NOT NULL, auth TEXT NOT NULL, wrapped TEXT NOT NULL, rauth TEXT NOT NULL, rwrapped TEXT NOT NULL, created INTEGER NOT NULL, fails INTEGER NOT NULL DEFAULT 0, locked INTEGER NOT NULL DEFAULT 0)"),
+        db.prepare("CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, uid TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL)"),
+        db.prepare("CREATE INDEX IF NOT EXISTS sessions_uid ON sessions (uid)"),
+        db.prepare("CREATE TABLE IF NOT EXISTS vaults (uid TEXT PRIMARY KEY, rev INTEGER NOT NULL, iv TEXT NOT NULL, ct TEXT NOT NULL, updated INTEGER NOT NULL, op TEXT)"),
+        db.prepare("CREATE TABLE IF NOT EXISTS hits (k TEXT PRIMARY KEY, win INTEGER NOT NULL, n INTEGER NOT NULL, exp INTEGER NOT NULL)"),
+      ]);
+      // Databases made before the op column existed get it now.
+      await db.prepare("ALTER TABLE vaults ADD COLUMN op TEXT").run().catch(() => {});
+    })
     .catch((err) => {
       schemaReady.delete(db);
       throw err;
@@ -457,31 +473,30 @@ async function accountRoute(name, request, env, ctx) {
   if (!accountsOn(env)) throw new ApiError(503, "accounts_not_configured", "Accounts aren't switched on yet.");
   await schema(env.DB);
   const now = Date.now();
-  // Now and then, sweep out expired counters and sessions.
-  if (Math.random() < 0.02) ctx.waitUntil(env.DB.batch([env.DB.prepare("DELETE FROM hits WHERE exp < ?").bind(Math.floor(now / 1000)), env.DB.prepare("DELETE FROM sessions WHERE expires < ?").bind(now)]).catch(() => {}));
+  // Now and then (on sign-in routes, never on backups), sweep out expired counters and sessions.
+  if (name && Math.random() < 0.02) ctx.waitUntil(env.DB.batch([env.DB.prepare("DELETE FROM hits WHERE exp < ?").bind(Math.floor(now / 1000)), env.DB.prepare("DELETE FROM sessions WHERE expires < ?").bind(now)]).catch(() => {}));
 
   if (!name) {
     // The vault.
     const { uid } = await session(env, request, now);
     if (request.method === "GET") {
-      await limits(env, "vaultGet", request, { user: uid }, now);
       const row = await env.DB.prepare("SELECT rev, iv, ct FROM vaults WHERE uid = ?").bind(uid).first();
       return [200, row ? { rev: row.rev, iv: row.iv, ct: row.ct } : { rev: 0 }];
     }
-    await limits(env, "vaultPut", request, { user: uid }, now);
-    const { iv, ct, base } = await readJson(request, ACCOUNT.vaultMax + 200);
+    const { iv, ct, base, op = null } = await readJson(request, ACCOUNT.vaultMax + 200);
     b64Field(iv, 12, "iv");
     if (typeof ct !== "string" || ct.length < 24 || ct.length > ACCOUNT.vaultMax || !B64_.test(ct)) throw new ApiError(400, "bad_body", "Missing or odd ct.");
     if (!Number.isInteger(base) || base < 0) throw new ApiError(400, "bad_body", "Missing base revision.");
+    if (op !== null && (typeof op !== "string" || !/^[A-Za-z0-9_-]{8,40}$/.test(op))) throw new ApiError(400, "bad_body", "Odd op.");
     // Only replace the revision this copy was built on; otherwise hand back the newer one.
     const res = base === 0
-      ? await env.DB.prepare("INSERT INTO vaults (uid, rev, iv, ct, updated) VALUES (?, 1, ?, ?, ?) ON CONFLICT (uid) DO NOTHING").bind(uid, iv, ct, now).run()
-      : await env.DB.prepare("UPDATE vaults SET rev = rev + 1, iv = ?, ct = ?, updated = ? WHERE uid = ? AND rev = ?").bind(iv, ct, now, uid, base).run();
-    if (!res.meta?.changes) {
-      const cur = await env.DB.prepare("SELECT rev, iv, ct FROM vaults WHERE uid = ?").bind(uid).first();
-      return [409, { error: "conflict", message: "Changed elsewhere first.", rev: cur?.rev || 0, iv: cur?.iv, ct: cur?.ct }];
-    }
-    return [200, { rev: base + 1 }];
+      ? await env.DB.prepare("INSERT INTO vaults (uid, rev, iv, ct, updated, op) VALUES (?, 1, ?, ?, ?, ?) ON CONFLICT (uid) DO NOTHING").bind(uid, iv, ct, now, op).run()
+      : await env.DB.prepare("UPDATE vaults SET rev = rev + 1, iv = ?, ct = ?, updated = ?, op = ? WHERE uid = ? AND rev = ?").bind(iv, ct, now, op, uid, base).run();
+    if (res.meta?.changes) return [200, { rev: base + 1 }];
+    const cur = await env.DB.prepare("SELECT rev, iv, ct, op FROM vaults WHERE uid = ?").bind(uid).first();
+    // The same save sent twice (the answer to the first got lost): it already happened.
+    if (op && cur?.op === op) return [200, { rev: cur.rev }];
+    return [409, { error: "conflict", message: "Changed elsewhere first.", rev: cur?.rev || 0, iv: cur?.iv, ct: cur?.ct }];
   }
 
   const body = await readJson(request);
@@ -573,6 +588,18 @@ async function accountRoute(name, request, env, ctx) {
       env.DB.prepare("DELETE FROM sessions WHERE uid = ?").bind(uid),
     ]);
     return [200, { token: await newSession(env, uid, now) }];
+  }
+
+  if (name === "recovery") {
+    // A new recovery code (the old one stops working). Needs the password, like any change to how
+    // the account is unlocked.
+    await limits(env, "recovery", request, { user: uid }, now);
+    const user = await getUser(env, uid);
+    await checkAuth(env, user, b64Field(body.auth, 32, "auth"), "auth", now);
+    const rauth = await authHash(env, b64Field(body.rauth, 32, "rauth"));
+    const rwrapped = wrappedField(body.rwrapped, "rwrapped");
+    await env.DB.prepare("UPDATE users SET rauth = ?, rwrapped = ? WHERE id = ?").bind(rauth, rwrapped, uid).run();
+    return [200, { ok: true }];
   }
 
   if (name === "delete") {

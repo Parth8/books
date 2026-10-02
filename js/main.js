@@ -26,6 +26,7 @@ import { popup } from "./modal.js";
 import { tip, holdTipsWhile, resetTips } from "./tips.js";
 import { createCritters } from "./critters.js";
 import { canInstall, showInstall, shouldOffer, markOffered, chaiCard } from "./home.js";
+import { createLever } from "./lever.js";
 import * as Q from "./quips.js";
 import { fromGoodreads } from "./goodreads.js";
 import { poke } from "./eggs.js";
@@ -62,6 +63,8 @@ const book = (id) => state.books.find((b) => b.id === id);
 
 // Changes go to whichever backup is on: your account, or (without one) a sync code.
 let account = null;
+const panelsUp = new Map(); // how far each panel is open (see panelProgress)
+let syncRef = null; // the sync-code engine, once it exists (the HUD draws before it does)
 function backupSoon() {
   if (account?.on) account.soon();
   else sync.soon();
@@ -74,7 +77,9 @@ function commit(result, at, { keepStats = false } = {}) {
   const events = [...result.events];
   celebrate(events, at);
   renderHud();
+  statsDirty = true;
   if (stats.isOpen && !keepStats) renderStats();
+  else prerenderStats();
   backupSoon();
   void before;
   return result;
@@ -98,7 +103,31 @@ function nextPoster() {
 const MONTH = () => new Date().toLocaleDateString("en-GB", { month: "long" }).toUpperCase();
 let combo = { n: 0, t: 0 };
 
+/**
+ * Now and then, reading pays out: a jackpot. About one page session in twelve, never twice in ten
+ * minutes, so it stays a surprise.
+ */
+function maybeJackpot(anchor) {
+  // Remembered on the device, so reopening the app can't be used to farm jackpots.
+  let last = 0;
+  try {
+    last = Number(localStorage.getItem("shelfie.jackpot") || 0);
+  } catch {}
+  if (Date.now() - last < 600_000 || Math.random() > 1 / 12) return;
+  try {
+    localStorage.setItem("shelfie.jackpot", String(Date.now()));
+  } catch {}
+  const amount = [25, 25, 50, 50, 77, 100][Math.floor(Math.random() * 6)];
+  setTimeout(() => commit(S.jackpot(state, amount), anchor), 700);
+}
+
 function celebrate(events, at) {
+  if (events.some((e) => ["finished", "goal", "level", "imported", "jackpot", "badge"].includes(e.type))) lightsChase();
+  const jp = events.find((e) => e.type === "jackpot");
+  if (jp) {
+    feel("fanfare", "celebrate");
+    queuePoster({ lines: ["JACK", "POT!"], kicker: "🎰 BONUS ROUND", sub: `+${jp.amount} XP for reading. Lucky you${state.name ? `, ${state.name}` : ""}.`, tone: "#ffd60a", ink: "#0d0d0d", emoji: ["🪙", "⭐", "🎰"] });
+  }
   const xp = events.find((e) => e.type === "xp")?.amount || 0;
   if (xp && at) {
     floatText(at, `+${xp} XP`, "#e7ff3d");
@@ -196,6 +225,7 @@ function renderHud() {
   $("#lcd-xp").style.width = `${(lp.frac * 100).toFixed(1)}%`;
   const st = S.streak(state);
   $("#lcd-streak").textContent = `🔥${st}`;
+  renderFace();
   $("#lcd").classList.toggle("lit", st > 0);
   $("#lcd").setAttribute("aria-label", `Level ${lp.level}, ${state.xp} XP, ${st}-day streak, ${S.pagesOn(state)} of ${state.goal} pages today. Open your stats and goals`);
   for (const t of tapeItems) t.querySelector("sup").textContent = String(S.shelf(state, t.dataset.shelf).length).padStart(2, "0");
@@ -209,7 +239,7 @@ const tapeItems = ORDER.map((id) =>
 track.append(...tapeItems);
 let centers = [];
 const measureTape = () => (centers = tapeItems.map((t) => t.offsetLeft + t.offsetWidth / 2));
-const tapeX = new Spring(0, { stiffness: 260, damping: 28, onChange: (x) => paintTape(x) });
+const tapeX = new Spring(0, { stiffness: 170, damping: 22, onChange: (x) => paintTape(x) });
 
 /** Fractional shelf index for a track offset. */
 function fracAt(x) {
@@ -557,6 +587,7 @@ function saveSoon(ms) {
     if (!b || b.page === page) return;
     const anchor = deck.top?.el.querySelector(".denom") || deckEl;
     const r = commit(S.setPage(state, b.id, page), anchor);
+    if (page > b.page) maybeJackpot(anchor);
     if (r.events.some((e) => e.type === "finished" || e.type === "moved")) setTimeout(() => renderShelf(), 500);
     else {
       patchStamp(deck.top.el, book(b.id));
@@ -684,6 +715,29 @@ function updateScreen(b, p) {
   knob?.value(`Page ${p} of ${b.pages}`);
 }
 
+/** Fairy lights strung across the top of the macropad. */
+const fairy = (() => {
+  const n = 13;
+  const colors = ["#e7ff3d", "#ff6ad5", "#25c7ff", "#ff5a1f", "#ffd60a"];
+  const sag = (t) => 4 + Math.sin(t * Math.PI) * 12; // the wire droops in the middle
+  const path = `M0 4 ${Array.from({ length: 21 }, (_, i) => `L${(i / 20) * 100} ${sag(i / 20).toFixed(1)}`).join(" ")}`;
+  const el = h("div", { class: "fairy", "aria-hidden": "true" }, h("span", { svg: `<svg viewBox="0 0 100 26" preserveAspectRatio="none"><path d="${path}" vector-effect="non-scaling-stroke"/></svg>` }));
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    el.append(h("i", { vars: { "--x": `${t * 100}%`, "--y": `${sag(t) + 1}px`, "--c": colors[i % colors.length], "--d": `${(1.6 + ((i * 7) % 5) * 0.45).toFixed(2)}s`, "--delay": `${-((i * 13) % 9) * 0.3}s`, "--n": i } }));
+  }
+  return el;
+})();
+/** On big moments the lights chase. */
+function lightsChase() {
+  if (prefersReducedMotion()) return;
+  fairy.classList.remove("chase");
+  void fairy.offsetWidth;
+  fairy.classList.add("chase");
+  clearTimeout(lightsChase.t);
+  lightsChase.t = setTimeout(() => fairy.classList.remove("chase"), 3200);
+}
+
 function renderDock() {
   const b = book(topId);
   const mode = !b ? (state.books.length ? "add" : "empty") : b.shelf;
@@ -710,7 +764,7 @@ function renderDock() {
     knob.value(`Page ${b.page} of ${b.pages}`);
     const plus = (n, cls) => key(`+${n}`, cls, (e) => nudgeKey(n, e), { aria: `Add ${n} pages` });
     body = [
-      h("div", { class: "pad reading" }, screenEl, h("div", { class: "knob-well" }, knob.el, h("small", { text: "SPIN" })), h("div", { class: "keys" }, plus(1, "k-cream"), plus(5, "k-blue"), plus(10, "k-yellow"), plus(25, "k-red"))),
+      h("div", { class: "pad reading" }, screenEl, h("div", { class: "knob-well" }, knob.el, h("small", { text: "SPIN" })), h("div", { class: "keys round" }, plus(1, "k-cream"), plus(5, "k-blue"), plus(10, "k-yellow"), plus(25, "k-red"))),
     ];
   } else if (mode === "want") {
     screenEl = screen([`NEXT UP?`, b.title.toUpperCase().slice(0, 28), `${b.pages} PAGES · ~${hoursLeft(b.pages)}`]);
@@ -722,7 +776,11 @@ function renderDock() {
         h(
           "div",
           { class: "keys two" },
-          key("START", "k-blue wide", (e) => start(b.id, e.currentTarget), { sub: "READING ▶" }),
+          (() => {
+            const k = key("START", "k-blue wide", (e) => start(b.id, e.currentTarget), { sub: "READING" });
+            k.querySelector("b").append(h("i", { class: "play-tri", "aria-hidden": "true" }));
+            return k;
+          })(),
           key("🎲", "k-yellow", () => shuffle(), { aria: "Shuffle the pile", sub: "SHUFFLE" }),
         ),
       ),
@@ -759,13 +817,17 @@ function renderDock() {
           "div",
           { class: mode === "empty" ? "keys three" : "keys two" },
           key("SEARCH", "k-blue wide", () => openAdd(), { sub: "FIND A BOOK" }),
-          key("🧳", "k-pink", () => openImport(), { aria: "Import from Goodreads", sub: "GOODREADS" }),
+          // Goodreads is a first-day thing: offered here only while the library is empty
+          // (afterwards it lives in You → Library).
+          mode === "empty"
+            ? key("🧳", "k-pink", () => openImport(), { aria: "Import from Goodreads", sub: "GOODREADS" })
+            : key("✍️", "k-cream", () => openAdd({ manual: true }), { aria: "Type a book in by hand", sub: "BY HAND" }),
           mode === "empty" ? key("⚡", "k-yellow", (e) => loadStarter(e.currentTarget), { aria: "Load a starter stack", sub: "DEMO" }) : null,
         ),
       ),
     ];
   }
-  dock.replaceChildren(...body);
+  dock.replaceChildren(...body, fairy);
   if (!prefersReducedMotion()) dock.firstElementChild.animate([{ transform: "translateY(18px)", opacity: 0.4 }, { transform: "none", opacity: 1 }], { duration: 420, easing: "cubic-bezier(.2,1.4,.4,1)" });
 }
 
@@ -818,13 +880,66 @@ const stats = createPanel($("#panel-stats"), {
   onOpen: () => {
     hints.learn("stats");
     feel("open", "medium");
-    renderStats();
+    if (statsDirty) renderStats();
+    else if (!prefersReducedMotion()) $("#stats-body").querySelectorAll("[data-n]").forEach((el) => countUp(el));
+  },
+  onClose: () => feel("close", "light"),
+  onProgress: (p) => panelProgress("stats", p),
+});
+// Build the stats as soon as a finger lands on the bar, so nothing heavy happens mid-swipe.
+let statsDirty = true;
+$("#pullbar").addEventListener("pointerdown", () => statsDirty && !stats.isOpen && renderStats(), { passive: true });
+/** Build the stats while nothing else is happening, so pulling them up is pure motion. */
+let prerenderTimer = 0;
+function prerenderStats() {
+  clearTimeout(prerenderTimer);
+  prerenderTimer = setTimeout(() => {
+    const go = () => statsDirty && !stats.isOpen && !deck.dragging && renderStats({ quiet: true });
+    if ("requestIdleCallback" in window) requestIdleCallback(go, { timeout: 4000 });
+    else go();
+  }, 2500);
+}
+$("#pullbar").addEventListener("click", () => stats.open());
+
+/**
+ * While a panel is up, everything behind it holds still (the liquid, the marquee, the drift),
+ * so the panel itself gets the whole frame budget: no jank on the way up or down.
+ */
+function panelProgress(name, p) {
+  panelsUp.set(name, p);
+  const up = [...panelsUp.values()].some((v) => v > 0.02);
+  if (up === document.body.classList.contains("panel-up")) return;
+  document.body.classList.toggle("panel-up", up);
+  if (!up) liquid?.wake?.();
+}
+
+const mePanel = createPanel($("#panel-me"), {
+  onOpen: () => {
+    feel("open", "medium");
     checkAccounts();
   },
   onClose: () => feel("close", "light"),
-  onProgress: (p) => document.body.style.setProperty("--panel", p.toFixed(3)),
+  onProgress: (p) => panelProgress("me", p),
 });
-$("#pullbar").addEventListener("click", () => stats.open());
+$("#me").addEventListener("click", () => {
+  renderMe(); // built before it moves
+  mePanel.open();
+});
+$("#panel-me [data-close]").addEventListener("click", () => mePanel.close());
+/**
+ * After an account change, redraw only the parts of You that depend on it (never the whole
+ * panel: a lever you're holding mustn't vanish under your finger).
+ */
+function refreshMe() {
+  if (!mePanel.isOpen) return;
+  $("#me-safe")?.replaceWith(safeSection());
+  if (!document.querySelector(".lever.held")) $("#me-levers")?.replaceWith(leversSection());
+  $("#me-title").textContent = state.name ? state.name.toUpperCase().slice(0, 14) : "YOU";
+  const who = $(".me-id b");
+  if (who) who.textContent = state.name || "Anonymous reader";
+  const face = $(".me-avatar span");
+  if (face) face.textContent = faceOf();
+}
 // One tap opens your stats; keep tapping and something else happens.
 let lcdTimer = 0;
 $("#lcd").addEventListener("click", () => {
@@ -834,7 +949,7 @@ $("#lcd").addEventListener("click", () => {
 });
 $("#panel-stats [data-close]").addEventListener("click", () => stats.close());
 
-function renderStats() {
+function renderStats({ quiet = false } = {}) {
   const lp = S.levelProgress(state.xp);
   const wk = S.week(state);
   const top = Math.max(state.goal, ...wk.map((d) => d.pages));
@@ -885,60 +1000,11 @@ function renderStats() {
         return h("div", { class: `mini${got ? " got" : ""}`, title: b.text }, h("div", { class: "mini-paper" }, h("span", { class: "mini-e", text: got ? b.emoji : "?" }), h("b", { text: b.name.toUpperCase() }), h("small", { text: b.text })));
       }),
     ),
-    h("h3", { class: "p-h", text: "SYNC & BACKUP" }),
-    accountTile(),
-    // The sync code is the fallback for people without an account (and stays for anyone using one).
-    account?.on ? null : sync.on || accountsUp !== true ? syncTile() : null,
-    h(
-      "div",
-      { class: "keys two p-actions" },
-      key("⬇", "k-cream", exportData, { sub: "BACK UP FILE" }),
-      (() => {
-        const k = key("⬆", "k-cream", () => k.querySelector("input").click(), { sub: "RESTORE FILE" });
-        k.append(h("input", { type: "file", accept: "application/json,.json", hidden: true, on: { change: importData } }));
-        return k;
-      })(),
-    ),
-    h("h3", { class: "p-h", text: "IMPORT" }),
-    h(
-      "div",
-      { class: "tile t-import span2" },
-      h("small", { text: "🧳 FROM GOODREADS" }),
-      h("p", { class: "sync-text", text: "Bring your whole library in: read (with dates and ratings), currently reading, and want-to-read. The file never leaves your device." }),
-      h("div", { class: "keys one" }, key("IMPORT", "k-dark wide", () => openImport(), { sub: "GOODREADS LIBRARY" })),
-    ),
-    canInstall()
-      ? h(
-          "div",
-          { class: "tile t-home span2" },
-          h("small", { text: "📲 GET THE APP" }),
-          h("p", { class: "sync-text", text: "Add Shelfie to your home screen: it opens full-screen like a real app, with no app store and nothing to update." }),
-          h("div", { class: "keys one" }, key("ADD TO HOME SCREEN", "k-dark wide", () => showInstall({ name: state.name }), { sub: "TWO TAPS", aria: "Add Shelfie to your home screen" })),
-        )
-      : null,
-    h("h3", { class: "p-h", text: "SETTINGS" }),
-    h(
-      "div",
-      { class: "keys three p-actions" },
-      key("👋", "k-cream", () => askName({ edit: true }), { sub: state.name ? state.name.toUpperCase().slice(0, 12) : "YOUR NAME", aria: "Change your name" }),
-      toggleKey("🔊", "SOUND", "sound"),
-      toggleKey("📳", "HAPTICS", "haptics"),
-    ),
-    h(
-      "div",
-      { class: "keys three p-actions" },
-      key("?", "k-yellow", () => {
-        stats.close();
-        setTimeout(() => $("#help").click(), 350);
-      }, { sub: "HOW TO USE", aria: "How to use Shelfie" }),
-      toggleKey("🦙", "VISITORS", "visitors"),
-      key("⚠", "k-red", () => resetFlow(), { sub: "RESET ALL", aria: "Reset all data" }),
-    ),
-    h("p", { class: "p-note", text: "IPHONE ON SILENT? SOUNDS FOLLOW THE SILENT SWITCH; HAPTICS STILL PLAY." }),
-    chaiCard(state.name),
   );
-  if (!prefersReducedMotion()) {
-    [...$("#stats-body").querySelectorAll(".tile, .mini")].forEach((t, i) => t.animate([{ transform: "translateY(24px) scale(.94)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: Math.min(600, 35 * i), easing: "cubic-bezier(.2,1.3,.4,1)", fill: "backwards" }));
+  statsDirty = false;
+  if (!quiet && !prefersReducedMotion()) {
+    // Only what's on screen first rises in (after the panel has mostly arrived), and numbers roll up.
+    [...$("#stats-body").querySelectorAll(".tile")].slice(0, 5).forEach((t, i) => t.animate([{ transform: "translateY(18px)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 700, delay: 160 + 70 * i, easing: "cubic-bezier(.22,1.2,.36,1)", fill: "backwards" }));
     $("#stats-body").querySelectorAll("[data-n]").forEach((el) => countUp(el));
   }
 }
@@ -1071,17 +1137,33 @@ function goalDial({ kind, label, unit, value, target, cls, wide = false }) {
 /* ---------------- reset ---------------- */
 
 async function resetFlow() {
-  const sure = await popup({
-    tone: "orange",
-    icon: "🧨",
-    title: "RESET YOUR DATA?",
-    text: `This wipes every book, page, goal, XP, badge and sticker on this device${state.name ? `, ${state.name}` : ""}. Handy after playing around.`,
-    actions: [
-      { id: "no", label: "NO, KEEP IT", cancel: true, primary: false },
-      { id: "yes", label: "YES, RESET" },
-    ],
-  });
-  if (sure !== "yes") return;
+  // The lever was the "are you sure?". With a backup, say what to reset; then type to confirm.
+  const cloud = account?.on ? "account" : sync.on ? "sync" : null;
+  let scope = "phone";
+  if (cloud) {
+    scope = await popup({
+      tone: "orange",
+      icon: "🧨",
+      title: "RESET WHAT?",
+      text: cloud === "account" ? `Your books are on this phone and backed up to your account (${account.user}).` : "Your books are on this phone and synced to your other devices with a code.",
+      actions: [
+        { id: "cancel", label: "CANCEL", cancel: true },
+        { id: "phone", label: "JUST THIS PHONE" },
+        { id: "all", label: cloud === "account" ? "PHONE + BACKUP" : "EVERY DEVICE", primary: true },
+      ],
+    });
+    if (scope !== "phone" && scope !== "all") return;
+  }
+  const what =
+    scope === "all"
+      ? cloud === "account"
+        ? "Every book, page, goal, XP, badge and sticker, on this phone and in your account backup. Your other devices empty too when they next sync. You stay logged in."
+        : "Every book, page, goal, XP, badge and sticker, here and on every device linked with your sync code."
+      : cloud === "account"
+        ? "Everything on this phone, and you'll be logged out here. Your account backup stays: log in again any time to bring it back."
+        : cloud === "sync"
+          ? "Everything on this phone, and sync is switched off here. Your other devices keep their copy."
+          : "Every book, page, goal, XP, badge and sticker on this phone. There's no backup, so it can't come back.";
   const res = await popup({
     tone: "danger",
     danger: true,
@@ -1090,19 +1172,29 @@ async function resetFlow() {
     body: h(
       "div",
       { class: "danger-body" },
-      h("p", { class: "danger-text", text: "Once your data is deleted, it's gone for good. There's no way to recover it." }),
-      sync.on ? h("p", { class: "pop-text", text: "Sync will be switched off on this device. The synced copy stays for your other devices." }) : null,
-      account?.on ? h("p", { class: "pop-text", text: "You'll be logged out on this device. Your account backup stays (log in again to bring it back, or delete the account first to remove it too)." }) : null,
+      h("p", { class: "danger-text", text: `Once it's deleted, it's gone for good. ${what}` }),
       h("p", { class: "pop-text" }, "To reset, type ", h("b", { class: "danger-word", text: "reset" }), " below."),
     ),
     input: { placeholder: "type reset", max: 12, label: "Type reset to confirm", match: (v) => v.trim().toLowerCase() === "reset" },
     actions: [
       { id: "cancel", label: "CANCEL", cancel: true },
-      { id: "reset", label: "DELETE EVERYTHING", primary: true, danger: true },
+      { id: "reset", label: "DELETE IT", primary: true, danger: true },
     ],
     sound: "error",
   });
   if (res.id !== "reset") return;
+  mePanel.close();
+  stats.close();
+  if (scope === "all") {
+    // Mark the reset and send it up before anything else, so every copy empties.
+    state = { ...S.reset(), toured: true, name: state.name, nameAt: state.nameAt };
+    try {
+      localStorage.setItem(S.KEY, JSON.stringify(state));
+    } catch {}
+    island.say({ icon: "🧹", title: "RESETTING EVERYWHERE…", tone: "violet", buzz: false });
+    await (cloud === "account" ? account.now() : sync.now()).catch(() => {});
+    return wipeDevice({ reset: true, keepLink: true });
+  }
   if (account?.on) await account.logout().catch(() => {});
   wipeDevice({ reset: true });
 }
@@ -1112,25 +1204,28 @@ async function resetFlow() {
  * A reset (`reset: true`) also marks the moment, so an older copy synced from elsewhere can't
  * bring the books back. Clearing after logging out doesn't: logging in again brings them back.
  */
-function wipeDevice({ reset = false } = {}) {
-  sync.disable();
+function wipeDevice({ reset = false, keepLink = false } = {}) {
+  if (!keepLink) sync.disable();
   try {
     // You already know the gestures, so the tour stays seen; the name and import offer come back.
-    const keep = new Set(["shelfie.fx", TOUR]);
+    const keep = new Set(["shelfie.fx", TOUR, ...(keepLink ? ["shelfie.sync"] : [])]);
     for (const k of Object.keys(localStorage)) if (k === S.KEY || k.startsWith(`${S.KEY}.`) || (k.startsWith("shelfie.") && !keep.has(k))) localStorage.removeItem(k);
-    localStorage.setItem(S.KEY, JSON.stringify({ ...(reset ? S.reset() : S.empty()), toured: true }));
+    // Reset everywhere: the reset state already went up; keep exactly that one.
+    const next = keepLink ? state : { ...(reset ? S.reset() : S.empty()), toured: true };
+    localStorage.setItem(S.KEY, JSON.stringify(next));
     sessionStorage.setItem("shelfie.fresh", "1");
   } catch {}
   stats.close();
   feel("drop", "error");
-  shake(document.body, 14);
-  rain({ count: 120, emoji: ["💨", "🧹"] });
-  setTimeout(() => location.reload(), 1200);
+  // A light sweep (not a heavy shake of the whole page), then a fresh start.
+  rain({ count: 50, emoji: ["💨", "🧹"] });
+  setTimeout(() => location.reload(), 1100);
 }
 
 /* ---------------- Goodreads import ---------------- */
 
 const imp = createPanel($("#panel-import"), {
+  onProgress: (p) => panelProgress("import", p),
   onOpen: () => {
     feel("open", "medium");
     showImportStart();
@@ -1238,16 +1333,19 @@ const apiBase = (document.querySelector('meta[name="api-base"]')?.content || "")
 let linking = false;
 let revealCode = false;
 
-const sync = createSync({
+const sync = (syncRef = createSync({
   base: apiBase,
   get: () => state,
   put: (next) => applyIncoming(next),
   merge: S.merge,
   onStatus: () => {
-    if (stats.isOpen) $("#sync-tile")?.replaceWith(syncTile());
+    if (mePanel.isOpen) {
+      $("#sync-tile")?.replaceWith(syncTile());
+      $("#safe-strip")?.replaceWith(safeStrip());
+    }
     $("#lcd").classList.toggle("synced", sync.on && sync.status.state === "idle");
   },
-});
+}));
 
 /** A copy arrived (another tab, or sync): fold it in and redraw if anything changed. */
 function applyIncoming(next) {
@@ -1371,7 +1469,7 @@ async function checkAccounts() {
   } catch {
     return null; // try again next time
   }
-  if (stats.isOpen) renderStats();
+  refreshMe();
   return accountsUp;
 }
 
@@ -1398,7 +1496,10 @@ account = createAccount({
 });
 
 function renderAccountTile() {
-  if (stats.isOpen) $("#account-tile")?.replaceWith(accountTile());
+  if (mePanel.isOpen) {
+    $("#account-tile")?.replaceWith(accountTile());
+    $("#safe-strip")?.replaceWith(safeStrip());
+  }
 }
 
 function accountTile() {
@@ -1431,8 +1532,8 @@ function accountTile() {
       h(
         "div",
         { class: "acct-more" },
+        h("button", { type: "button", class: "link-btn", text: "NEW RECOVERY CODE", on: { click: () => newRecoveryFlow() } }),
         h("button", { type: "button", class: "link-btn", text: "LOG OUT EVERYWHERE", on: { click: () => logoutFlow({ all: true }) } }),
-        h("button", { type: "button", class: "link-btn danger", text: "DELETE ACCOUNT", on: { click: () => deleteFlow() } }),
       ),
     );
   }
@@ -1484,13 +1585,22 @@ async function signupFlow() {
   rain({ count: 120, emoji: ["🔐", "📚", "✨"] });
   await showRecovery(res.result);
   island.say({ icon: "🔐", title: "ACCOUNT MADE", sub: `${state.books.length} books backed up, encrypted`, tone: "lime" });
-  if (stats.isOpen) renderStats();
+  refreshMe();
 }
 
 /** The recovery code, once. Confirmed by typing its last four characters. */
 async function showRecovery(code) {
   const last = code.slice(-4);
-  const copy = h("button", { type: "button", class: "install-go quiet", text: "⧉ COPY CODE" });
+  const copy = h("button", { type: "button", class: "install-go quiet", text: "⧉ COPY" });
+  const save = h("button", { type: "button", class: "install-go quiet", text: "💾 SAVE AS FILE" });
+  save.addEventListener("click", () => {
+    const blob = new Blob([`Shelfie recovery code for ${account?.user || "your account"}\n\n${code}\n\nKeep it somewhere safe. With your username, it sets a new password if you forget yours.\n`], { type: "text/plain" });
+    const a = h("a", { href: URL.createObjectURL(blob), download: "shelfie-recovery-code.txt" });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    save.textContent = "SAVED ✓";
+  });
   copy.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(code);
@@ -1508,8 +1618,8 @@ async function showRecovery(code) {
       { class: "danger-body" },
       h("p", { class: "pop-text", text: "If you ever forget your password, this code is the only way back in. We can't reset it for you: we can't read your account, that's the point." }),
       h("p", { class: "recovery-code", text: code }),
-      copy,
-      h("p", { class: "pop-text", text: `Save it in your password manager or notes. To confirm, type its last 4 characters (${"•".repeat(4)}).` }),
+      h("div", { class: "install-actions two" }, copy, save),
+      h("p", { class: "pop-text", text: "Keep it in your password manager, notes, or that file. To make sure you've got it, type the last 4 characters of the code above. (Lose it later? Make a new one any time in You → Account.)" }),
     ),
     input: { placeholder: "Last 4 characters", max: 4, label: "Last four characters of the recovery code", capitalize: "characters", match: (v) => v.trim().toUpperCase() === last },
     actions: [{ id: "ok", label: "I'VE SAVED IT", primary: true }],
@@ -1537,7 +1647,7 @@ async function loginFlow() {
   feel("fanfare", "celebrate");
   rain({ count: 100, emoji: ["📚", "🔓"] });
   island.say({ icon: "🔓", title: `HI ${account.user.split("@")[0].toUpperCase().slice(0, 14)}`, sub: `${state.books.length} books on your shelves`, tone: "lime" });
-  if (stats.isOpen) renderStats();
+  refreshMe();
 }
 
 async function recoverFlow() {
@@ -1569,7 +1679,7 @@ async function recoverFlow() {
   if (sync.on) sync.disable();
   feel("fanfare", "celebrate");
   island.say({ icon: "🛟", title: "NEW PASSWORD SET", sub: "Your recovery code still works", tone: "lime" });
-  if (stats.isOpen) renderStats();
+  refreshMe();
 }
 
 async function passwordFlow() {
@@ -1617,7 +1727,7 @@ async function logoutFlow({ all = false } = {}) {
   await account.logout({ all });
   if (choice === "clear") return wipeDevice();
   island.say({ icon: "👋", title: "LOGGED OUT", sub: "Your shelves are still on this device", tone: "violet" });
-  if (stats.isOpen) renderStats();
+  refreshMe();
 }
 
 async function deleteFlow() {
@@ -1647,7 +1757,147 @@ async function deleteFlow() {
   feel("drop", "error");
   shake(document.body, 10);
   island.say({ icon: "🗑️", title: "ACCOUNT DELETED", sub: "Your shelves are still on this device", tone: "violet" });
-  if (stats.isOpen) renderStats();
+  refreshMe();
+}
+
+/* ---------------- the ME panel ---------------- */
+
+/** One tappable row: an icon, what it does, and a line saying what happens. */
+function meRow(icon, title, text, onClick, { aria, tone = "", extra = null } = {}) {
+  const b = h("button", { type: "button", class: `me-row${tone ? ` tone-${tone}` : ""}`, "aria-label": aria || title }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: icon }), h("span", { class: "me-row-text" }, h("b", { text: title }), h("small", { text })), h("span", { class: "me-row-go", "aria-hidden": "true", text: "›" }), extra);
+  b.addEventListener("click", (e) => {
+    feel("click", "light");
+    onClick(e);
+  });
+  return b;
+}
+
+/** A switch row for a preference. */
+function switchRow(icon, title, text, pref) {
+  const sw = h("span", { class: `switch${fx[pref] ? " on" : ""}`, "aria-hidden": "true" }, h("i"));
+  const b = h("button", { type: "button", class: "me-row", role: "switch", "aria-checked": String(fx[pref]), "aria-label": title }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: icon }), h("span", { class: "me-row-text" }, h("b", { text: title }), h("small", { text })), sw);
+  b.addEventListener("click", () => {
+    fx.set(pref, !fx[pref]);
+    sw.classList.toggle("on", fx[pref]);
+    b.setAttribute("aria-checked", String(fx[pref]));
+    feel(fx[pref] ? "snap" : "click", "select");
+  });
+  return b;
+}
+
+/** Where your books are, in two plain lines. */
+function safeStrip() {
+  const n = state.books.length;
+  const cloud = account?.on
+    ? account.status.state === "error"
+      ? ["⚠️", "BACKUP NEEDS ATTENTION", account.status.error, "warn"]
+      : ["☁️", "BACKED UP TO YOUR ACCOUNT", account.status.state === "syncing" ? "Saving…" : `Encrypted · ${ago(account.status.at).toLowerCase()}`, "ok"]
+    : sync.on
+      ? ["🔗", "SYNCED WITH A CODE", `Encrypted · ${ago(sync.status.at).toLowerCase()}`, "ok"]
+      : ["☁️", "NOT BACKED UP YET", "If this phone is lost or cleared, so are your books.", "warn"];
+  const line = (icon, title, text, cls) => h("div", { class: `safe-line ${cls}` }, h("span", { class: "safe-dot", "aria-hidden": "true" }), h("span", { class: "safe-icon", "aria-hidden": "true", text: icon }), h("span", {}, h("b", { text: title }), h("small", { text })));
+  return h("div", { class: "safe-strip", id: "safe-strip" }, line("📱", "ON THIS PHONE", `${fmt(n)} book${n === 1 ? "" : "s"} · always here, works offline`, "ok"), line(...cloud));
+}
+
+function renderMe() {
+  const lp = S.levelProgress(state.xp);
+  $("#me-title").textContent = state.name ? state.name.toUpperCase().slice(0, 14) : "YOU";
+  const restore = h("input", { type: "file", accept: "application/json,.json", hidden: true, on: { change: importData } });
+  fill(
+    $("#me-body"),
+    h(
+      "div",
+      { class: "me-head" },
+      h("button", { type: "button", class: "me-avatar", "aria-label": "Change your name", on: { click: () => askName({ edit: true }).then(refreshMe) } }, h("span", { text: faceOf() })),
+      h("div", { class: "me-id" }, h("b", { text: state.name || "Anonymous reader" }), h("small", { text: `LV${String(lp.level).padStart(2, "0")} · ${lp.title.toUpperCase()}` }), h("button", { type: "button", class: "link-btn", text: state.name ? "CHANGE NAME" : "ADD YOUR NAME", on: { click: () => askName({ edit: true }).then(refreshMe) } })),
+    ),
+
+    h("h3", { class: "p-h", text: "YOUR BOOKS ARE SAFE" }),
+    safeSection(),
+
+    h("h3", { class: "p-h", text: "LIBRARY" }),
+    h(
+      "div",
+      { class: "me-rows" },
+      meRow("🧳", "IMPORT FROM GOODREADS", "Your whole library: read (with dates and ratings), reading, want to read.", () => {
+        mePanel.close();
+        setTimeout(openImport, 300);
+      }),
+      meRow("💾", "SAVE A COPY", "Download a file with everything. Handy for safekeeping; no account needed.", exportData, { aria: "Save a copy of your shelves to a file" }),
+      meRow("📂", "RESTORE A COPY", "Pick a saved file. Its books are added; nothing here is deleted.", () => restore.click(), { aria: "Restore shelves from a file", extra: restore }),
+    ),
+
+    h("h3", { class: "p-h", text: "SETTINGS" }),
+    h(
+      "div",
+      { class: "me-rows" },
+      switchRow("🔊", "SOUND", "Clicks, pops and fanfares. Follows the iPhone silent switch.", "sound"),
+      switchRow("📳", "HAPTICS", "Little taps you can feel.", "haptics"),
+      switchRow("🦙", "VISITORS", "Animals that wander by now and then.", "visitors"),
+      meRow("?", "HOW TO USE", "Replay the tour, or bring the explainer pop-ups back.", () => {
+        mePanel.close();
+        setTimeout(helpFlow, 320);
+      }),
+      canInstall() ? meRow("📲", "ADD TO HOME SCREEN", "Opens full-screen like an app. Two taps.", () => showInstall({ name: state.name }), { aria: "Add Shelfie to your home screen" }) : null,
+    ),
+
+    h("h3", { class: "p-h danger", text: "DANGER ZONE" }),
+    leversSection(),
+    chaiCard(state.name),
+  );
+}
+
+function safeSection() {
+  return h(
+    "div",
+    { id: "me-safe" },
+    safeStrip(),
+    accountTile(),
+    // Sync codes: for anyone already using one, or while accounts aren't available.
+    account?.on ? null : sync.on || accountsUp !== true ? syncTile() : null,
+  );
+}
+
+function leversSection() {
+  return h(
+    "div",
+    { class: "levers", id: "me-levers" },
+    createLever({ label: "RESET", sub: "WIPE BOOKS, PAGES, XP", onPull: () => resetFlow() }),
+    account?.on ? createLever({ label: "DELETE ACCOUNT", sub: "AND ITS BACKUP", tone: "violet", onPull: () => deleteFlow() }) : null,
+  );
+}
+
+/** The face on the avatar button: your initial, or a stand-in. */
+function faceOf() {
+  const c = [...(state.name || "")][0];
+  return c ? c.toUpperCase() : "👤";
+}
+function renderFace() {
+  const f = faceOf();
+  if ($("#me-face").textContent !== f) $("#me-face").textContent = f;
+  // A small badge on the avatar while a real library has no backup.
+  $("#me").classList.toggle("warn", !account?.on && !syncRef?.on && state.books.length >= 5);
+}
+
+async function newRecoveryFlow() {
+  const res = await popup({
+    tone: "yellow",
+    icon: "🛟",
+    title: "NEW RECOVERY CODE",
+    text: "Lost your recovery code? Make a new one. The old one stops working. Enter your password to confirm.",
+    fields: [
+      { name: "user", type: "text", value: account.user, autocomplete: "username", label: "Username", max: 254 },
+      { name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "done" },
+    ],
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      { id: "go", label: "MAKE ONE", primary: true, busy: "MAKING…" },
+    ],
+    submit: (v) => account.newRecovery(v.password),
+  });
+  if (res.id !== "go") return;
+  await showRecovery(res.result);
+  island.say({ icon: "🛟", title: "NEW CODE SAVED", sub: "The old one no longer works", tone: "lime" });
 }
 
 function notReady() {
@@ -1669,16 +1919,24 @@ async function importData(e) {
   if (!file) return;
   try {
     const text = await file.text();
-    const next = S.load({ getItem: () => text });
-    if (!next.books.length && !next.xp) throw new Error("empty");
-    state = next;
-    state = S.save(globalThis.localStorage, state);
+    const copy = S.load({ getItem: () => text });
+    if (!copy.books.length && !copy.xp) throw new Error("empty");
+    const before = state.books.length;
+    state = S.restore(state, copy);
+    try {
+      localStorage.setItem(S.KEY, JSON.stringify(state)); // as is: no merge with an older reset on disk
+    } catch {}
+    statsDirty = true;
     renderShelf({ deal: 1 });
-    renderStats();
-    island.say({ icon: "✅", title: "SHELVES RESTORED", sub: `${state.books.length} books`, tone: "lime" });
+    renderHud();
+    refreshMe();
+    backupSoon();
+    feel("fanfare", "success");
+    island.say({ icon: "✅", title: "COPY RESTORED", sub: `${fmt(state.books.length - before)} books added · ${fmt(state.books.length)} in all`, tone: "lime" });
   } catch {
-    island.say({ icon: "🤔", title: "THAT FILE DIDN'T WORK", sub: "Pick a Shelfie backup (.json)", tone: "pink" });
+    island.say({ icon: "🤔", title: "THAT FILE DIDN'T WORK", sub: "Pick a Shelfie copy (.json)", tone: "pink" });
   }
+  e.target.value = "";
 }
 
 /* ============================================================
@@ -1695,6 +1953,7 @@ function drawLegend() {
 }
 
 const add = createPanel($("#panel-add"), {
+  onProgress: (p) => panelProgress("add", p),
   onOpen: () => {
     addShelf = shelf;
     drawLegend();
@@ -1714,10 +1973,15 @@ const add = createPanel($("#panel-add"), {
 });
 $("#panel-add [data-close]").addEventListener("click", () => add.close());
 let added = [];
-const openAdd = () => add.open();
+function openAdd({ manual = false } = {}) {
+  add.open();
+  const form = $("#panel-add .manual");
+  form.open = manual;
+  if (manual) setTimeout(() => $("#m-title").focus({ preventScroll: true }), 320);
+}
 
 function suggestions() {
-  return h("div", {}, suggestionChips(), h("button", { type: "button", class: "gr-cta", on: { click: () => openImport() } }, h("span", { text: "🧳" }), h("b", { text: "HAVE A GOODREADS LIBRARY?" }), h("small", { text: "IMPORT IT ALL AT ONCE →" })));
+  return h("div", {}, suggestionChips());
 }
 function suggestionChips() {
   const picks = ["Fourth Wing", "Project Hail Mary", "Normal People", "Atomic Habits", "The Hobbit", "Tomorrow, and Tomorrow"];
@@ -1918,7 +2182,10 @@ function lcdTaps() {
 
 addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (document.querySelector(".pop, .tour")) return;
   if (add.isOpen) add.close();
+  else if (imp.isOpen) imp.close();
+  else if (mePanel.isOpen) mePanel.close();
   else if (stats.isOpen) stats.close();
 });
 
@@ -1981,6 +2248,7 @@ function tutorialDone(finished) {
 /** After the first tour: ask for a name, then offer Goodreads (or a sync code). */
 async function onboard() {
   if (!state.name) await askName();
+  if (!account?.on && (await checkAccounts())) await safeStep();
   if (state.books.length < 3) await bringBooks();
   setTimeout(introTips, 600);
 }
@@ -2007,6 +2275,29 @@ async function askName({ edit = false } = {}) {
   island.say({ icon: "👋", title: `HI, ${state.name.toUpperCase()}!`, sub: Q.hello(state.name), tone: "lime" });
 }
 
+/** Onboarding: where your books live, and how to keep them. */
+async function safeStep() {
+  const choice = await popup({
+    tone: "cyan",
+    icon: "🛟",
+    title: "KEEP YOUR BOOKS SAFE",
+    body: h(
+      "div",
+      { class: "explain" },
+      h("p", { class: "explain-row" }, h("span", { text: "📱" }), h("span", { text: "Your books live on this phone. Shelfie works offline and stays fast." })),
+      h("p", { class: "explain-row" }, h("span", { text: "☁️" }), h("span", { text: "A free account backs them up, encrypted on your phone first: not even we can read them." })),
+      h("p", { class: "explain-row" }, h("span", { text: "🔁" }), h("span", { text: "New phone? Log in and everything comes back. Forgot your password? Your recovery code gets you in." })),
+    ),
+    actions: [
+      { id: "later", label: "LATER", cancel: true },
+      { id: "login", label: "LOG IN" },
+      { id: "signup", label: "SIGN UP", primary: true },
+    ],
+  });
+  if (choice === "signup") await signupFlow();
+  if (choice === "login") await loginFlow();
+}
+
 async function bringBooks() {
   const choice = await popup({
     tone: "pink",
@@ -2015,7 +2306,7 @@ async function bringBooks() {
     text: "Coming from Goodreads? Import your whole library: what you've read (with dates and ratings), what you're reading, and your want-to-read. Already have a Shelfie account? Log in and your shelves come with you.",
     actions: [
       { id: "later", label: "START FRESH", cancel: true },
-      { id: "sync", label: "LOG IN" },
+      ...(account?.on || accountsUp !== true ? [] : [{ id: "sync", label: "LOG IN" }]),
       { id: "gr", label: "GOODREADS", primary: true },
     ],
   });
@@ -2023,7 +2314,7 @@ async function bringBooks() {
   if (choice === "sync") loginFlow();
 }
 
-$("#help").addEventListener("click", async () => {
+async function helpFlow() {
   feel("open", "light");
   const what = await popup({
     tone: "yellow",
@@ -2041,7 +2332,7 @@ $("#help").addEventListener("click", async () => {
     hints.reset?.();
     introTips();
   }
-});
+}
 
 let toured = !!state.toured;
 try {
@@ -2149,6 +2440,8 @@ const critters = createCritters({
 
 // Hint that stats live below, once.
 if (!hints.has("stats")) setTimeout(() => !stats.isOpen && stats.peek(), 2600);
+
+prerenderStats();
 
 // Exposed for the browser tests.
 globalThis.__shelfie = {

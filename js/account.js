@@ -180,6 +180,8 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
   let me = null; // { login, token, dataKey, wrapped, at }
   let timer = 0;
   let busy = null;
+  let pending = null;
+  let lastPull = 0;
   const status = { state: "loading", at: 0, error: "", login: null };
   const tell = (patch) => {
     Object.assign(status, patch);
@@ -226,36 +228,67 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
   async function signIn(login, token, dataKey, wrapped) {
     // Joining an account brings its books here; it never wipes them (see onJoin in main.js).
     await onJoin?.();
-    me = { login, token, dataKey, wrapped, at: 0 };
+    me = { login, token, dataKey, wrapped, at: 0, rev: null, sum: null };
     await writeMe(me);
     tell({ state: "idle", login, error: "" });
-    await round();
+    await round("pull");
   }
 
-  /** Pull, merge, push if anything changed. One round at a time. */
-  async function round() {
+  // A fingerprint of a copy, to skip saves that would change nothing.
+  const sumOf = (data) => {
+    const text = JSON.stringify(data);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+    return `${text.length}:${(h >>> 0).toString(36)}`;
+  };
+  const opId = () => [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(36).padStart(2, "0")).join("");
+
+  /**
+   * One sync round. Reads and writes are what the database bills, so:
+   *   - "pull" (app opened, back on screen, back online): read the backup, merge, and save only
+   *     if this device had something the backup didn't;
+   *   - "push" (after changes): save straight away on top of the revision we last saw, with no
+   *     read first; if another device saved in between, the server hands its copy back, we
+   *     merge and save again. Nothing is sent when nothing changed since the last save.
+   * Every save carries an id, so a save retried after a lost answer can't apply twice.
+   */
+  async function round(mode = "push") {
     if (!me) return;
-    if (busy) return busy;
+    if (busy) {
+      pending = pending === "pull" || mode === "pull" ? "pull" : "push";
+      return busy;
+    }
     busy = (async () => {
-      tell({ state: "syncing", error: "" });
       try {
-        let { data } = await call("/api/vault", { method: "GET", auth: true });
-        let remote = null;
-        let rev = data?.rev || 0;
-        if (data?.ct) remote = await open(me.dataKey, data);
-        let next = remote ? merge(get(), remote) : merge(get(), get());
-        put(next);
-        if (!remote || JSON.stringify(next) !== JSON.stringify(merge(remote, remote))) {
+        if (mode === "pull" || me.rev == null) {
+          tell({ state: "syncing", error: "" });
+          const { data } = await call("/api/vault", { method: "GET", auth: true });
+          me.rev = data?.rev || 0;
+          if (data?.ct) {
+            const remote = await open(me.dataKey, data);
+            put(merge(get(), remote));
+            me.sum = sumOf(merge(remote, remote));
+          } else me.sum = null;
+          lastPull = Date.now();
+        }
+        let next = merge(get(), get());
+        if (sumOf(next) !== me.sum) {
+          tell({ state: "syncing", error: "" });
+          const op = opId();
           let st = 0;
-          for (let attempt = 0; attempt < 3; attempt++) {
-            ({ status: st, data } = await call("/api/vault", { method: "PUT", auth: true, body: { ...(await seal(me.dataKey, next)), base: rev } }));
+          let data;
+          for (let attempt = 0; attempt < 4; attempt++) {
+            ({ status: st, data } = await call("/api/vault", { method: "PUT", auth: true, body: { ...(await seal(me.dataKey, next)), base: me.rev, op } }));
             if (st === 200) break;
             // Saved from another device first: fold that copy in and go again.
-            next = merge(next, await open(me.dataKey, data));
-            rev = data.rev;
+            me.rev = data.rev || 0;
+            if (data.ct) next = merge(next, await open(me.dataKey, data));
             put(next);
+            next = merge(get(), get());
           }
           if (st !== 200) throw new Error("Saving kept colliding. Try again.");
+          me.rev = data.rev;
+          me.sum = sumOf(next);
         }
         me.at = Date.now();
         writeMe(me).catch(() => {});
@@ -265,6 +298,11 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
         tell({ state: "error", error: err?.name === "OperationError" ? "Couldn't unlock your backup on this device. Log out and back in." : String(err?.message || err) });
       } finally {
         busy = null;
+        if (pending && me) {
+          const m = pending;
+          pending = null;
+          round(m);
+        }
       }
     })();
     return busy;
@@ -274,18 +312,20 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
     if (saved?.token && saved?.dataKey) {
       me = saved;
       tell({ state: "idle", login: saved.login, at: saved.at || 0 });
-      round();
+      round("pull");
     } else tell({ state: "off" });
   });
 
-  addEventListener("online", () => round());
+  addEventListener("online", () => round("pull"));
+  // Back on screen: catch up with other devices (at most once a minute). Leaving: save now.
   document.addEventListener("visibilitychange", () => {
     if (!me) return;
-    if (document.visibilityState === "visible") round();
-    else if (timer) {
+    if (document.visibilityState === "visible") {
+      if (Date.now() - lastPull > 60_000) round("pull");
+    } else if (timer) {
       clearTimeout(timer);
       timer = 0;
-      round();
+      round("push");
     }
   });
 
@@ -362,7 +402,7 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
 
     async logout({ all = false } = {}) {
       if (!me) return;
-      await round().catch(() => {}); // last changes go up first
+      await round("push").catch(() => {}); // last changes go up first
       try {
         await call("/api/auth/logout", { auth: true, body: { all } });
       } catch {}
@@ -377,14 +417,36 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
       await forget();
     },
 
-    now: () => round(),
-    soon(ms = 2500) {
+    /** "Sync now": catch up and save. */
+    now: () => round("pull"),
+    /**
+     * After a change: save once things go quiet. A burst of page turns becomes one save, which
+     * keeps database writes (and battery) down. Leaving the app saves straight away.
+     */
+    soon(ms = 12_000) {
       if (!me) return;
       clearTimeout(timer);
       timer = setTimeout(() => {
         timer = 0;
-        round();
+        round("push");
       }, ms);
+    },
+
+    /** A fresh recovery code (the old one stops working). Needs the password. */
+    async newRecovery(password) {
+      if (!me) throw new Error("Log in first.");
+      const { data: pre } = await call("/api/auth/prelogin", { body: { login: me.login } });
+      const { auth, encKey } = await fromPassword(password, pre.salt, pre.kdf);
+      let key;
+      try {
+        key = await unwrap(me.wrapped, encKey, true);
+      } catch {
+        throw new Error("That isn't your password.");
+      }
+      const code = makeCode();
+      const r = await fromRecovery(code);
+      await call("/api/auth/recovery", { auth: true, body: { auth, rauth: r.auth, rwrapped: await wrap(key, r.encKey) } });
+      return prettyCode(code);
     },
   };
 }

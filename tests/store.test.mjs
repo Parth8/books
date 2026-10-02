@@ -276,3 +276,28 @@ test("older saved copies gain the new fields", () => {
   assert.equal(s.goalYear, 24);
   assert.deepEqual(s.gone, {});
 });
+
+test("restoring a copy brings its books back, even after a reset or a removal, and deletes nothing", async () => {
+  const S = await import("../js/store.js");
+  const t0 = new Date(2025, 0, 1);
+  let copy = S.addBook(S.empty(), { title: "Dune", shelf: "read" }, t0).state;
+  copy = S.addBook(copy, { title: "Emma", shelf: "want" }, t0).state;
+  const dune = copy.books.find((b) => b.title === "Dune");
+  // This device was reset after the copy was made, then added a book, and removed Dune.
+  let here = { ...S.reset(new Date(2025, 5, 1)) };
+  here = S.addBook(here, { title: "Kept", shelf: "want" }, new Date(2025, 5, 2)).state;
+  here = { ...here, gone: { [dune.id]: new Date(2025, 5, 3).getTime() } };
+  const out = S.restore(here, copy, new Date(2025, 6, 1));
+  assert.deepEqual(out.books.map((b) => b.title).sort(), ["Dune", "Emma", "Kept"]);
+  assert.equal(out.resetAt, here.resetAt, "the reset marker stays, so older synced copies still can't undo it");
+  // It survives a later merge with the reset copy.
+  assert.equal(S.merge(out, here).books.length, 3);
+});
+
+test("jackpot: a bonus of 10 to 100 XP, with its own event", async () => {
+  const S = await import("../js/store.js");
+  const r = S.jackpot(S.empty(), 50);
+  assert.equal(r.state.xp, 50);
+  assert.ok(r.events.some((e) => e.type === "jackpot" && e.amount === 50));
+  assert.equal(S.jackpot(S.empty(), 5000).state.xp, 100);
+});

@@ -41,7 +41,7 @@
         <span class="lcd-xp" aria-hidden="true"><i id="lcd-xp"></i></span>
         <span class="lcd-streak" id="lcd-streak">🔥0</span>
       </button>
-      <button type="button" class="help" id="help" aria-label="How to use Shelfie">?</button>
+      <button type="button" class="me-btn" id="me" aria-label="You: account, backup and settings" aria-controls="panel-me"><span id="me-face">👤</span></button>
       </div>
       <div class="tape" id="tape">
         <div class="tape-track" id="tape-track" role="tablist" aria-label="Shelves"></div>
@@ -69,6 +69,11 @@
   <section class="panel" id="panel-stats" role="dialog" aria-modal="true" aria-labelledby="stats-title" aria-hidden="true">
     <div class="panel-grab"><i class="grab" aria-hidden="true"></i><h2 id="stats-title">STATS</h2><button type="button" class="x" data-close aria-label="Close">✕</button></div>
     <div class="panel-body" id="stats-body"></div>
+  </section>
+
+  <section class="panel" id="panel-me" role="dialog" aria-modal="true" aria-labelledby="me-title" aria-hidden="true">
+    <div class="panel-grab"><i class="grab" aria-hidden="true"></i><h2 id="me-title">YOU</h2><button type="button" class="x" data-close aria-label="Close">✕</button></div>
+    <div class="panel-body" id="me-body"></div>
   </section>
 
   <section class="panel" id="panel-import" role="dialog" aria-modal="true" aria-labelledby="import-title" aria-hidden="true">

@@ -10,18 +10,38 @@ No account, no ads, no build step. Everything lives on your own device.
 
 ---
 
+## Where things are
+
+- **The stage and the macropad.** Your books and the keys for them. That's where reading happens.
+- **Stats** (pull up the bar at the bottom, or tap the LCD): your level, goals, numbers and stickers. Nothing else.
+- **You** (the round avatar, top right): everything about you and your data:
+  - your name;
+  - whether your books are backed up, and your account;
+  - your library tools (Goodreads, save a copy, restore a copy);
+  - settings, how to use, add to home screen;
+  - the danger zone;
+  - the chai.
+
+  While your library has no backup, a small orange dot on the avatar says so.
+
 ## Learning it
 
 - **The tour.** The first time you open Shelfie, a short tour walks through the gestures and lets you practise each one on a demo stamp. It celebrates when you get it right. It only runs once: it's remembered on the device and in your synced data, so opening the app from the home screen won't show it again.
-- **Your name.** After the tour, Shelfie asks what to call you (a first name or nickname, nothing else) so the greetings and jokes can use it. Skip it if you like. Change it in Stats → Settings.
-- **Bring your books.** Then it offers to import your Goodreads library or link another device with a sync code.
+- **Your name.** After the tour, Shelfie asks what to call you (a first name or nickname, nothing else) so the greetings and jokes can use it. Skip it if you like. Change it any time in You.
+- **Keep your books safe.** Then one screen explains where your books live:
+  - on your phone (fast, offline);
+  - how a free, encrypted account backs them up and moves them to a new phone;
+  - what the recovery code is for.
+
+  Sign up, log in, or later.
+- **Bring your books.** Then it offers to import your Goodreads library.
 - **Explainer pop-ups.** The first time you meet each part of the app (the stamp, the macropad, the shelf tape, the LCD, the stats bar), the screen dims around it and a bright bubble says what it does.
 - **Gesture hints.** A small chip with a ghost finger shows the next gesture you haven't tried yet.
-- **Replaying it.** The **?** button next to the LCD replays the tour or brings the pop-ups back.
+- **Replaying it.** You → **How to use** replays the tour or brings the pop-ups back.
 
 ## Import from Goodreads
 
-Bring a whole Goodreads library across in about two minutes. Open the importer from the 🧳 **GOODREADS** key on an empty shelf, from search, or from Stats → Import.
+Bring a whole Goodreads library across in about two minutes. Open the importer from the 🧳 **GOODREADS** key while your library is empty, from the onboarding offer, or any time from You → Library.
 
 1. Open [goodreads.com/review/import](https://www.goodreads.com/review/import) in a browser (the export isn't in the Goodreads app).
 2. Tap **Export Library** and wait for the download link (a few minutes for big libraries).
@@ -37,14 +57,23 @@ Before anything is added, you see how many books are on each shelf.
 
 Big libraries stay smooth: only the few stamps near the top of the pile exist on the page at any time.
 
-## Reset
+## Reset, and the danger zone
 
-Stats → Settings → **⚠ RESET ALL** wipes every book, page, goal, XP, badge and sticker on the device. It asks twice:
+You → Danger zone has **levers**, not buttons. Grab the red ball and pull it all the way down. Let go early and it springs back, with a ratchet click on the way. The lever is the "are you sure?".
 
-1. A "are you sure?" pop-up, where **No** leaves everything alone.
-2. A red warning that the data can't be recovered, which only unlocks once you type `reset`.
+- **Reset.** If your books are backed up, it asks what to reset:
+  - **Just this phone.** Wipes this phone and logs you out here. Your account backup stays: log in again and it all comes back.
+  - **Phone + backup.** Wipes this phone and your account backup, and your other devices empty too when they next sync. You stay logged in.
 
-Sound and haptics preferences stay. If sync is on, it's switched off on this device, and the synced copy stays for your other devices.
+  Either way, a red warning says it can't be undone, and only unlocks once you type `reset`. Sound and haptics settings stay. Without a backup, it goes straight to that warning.
+- **Delete account** (only while you're logged in): needs your password. The account, its backup and its sessions are removed. The books on this phone stay.
+
+## Save a copy, restore a copy
+
+You → Library:
+
+- **Save a copy** downloads a file with everything. It's handy for safekeeping and works with no account.
+- **Restore a copy** adds the books from such a file. Nothing on this phone is deleted, and the file's books come back even if this phone was reset or they were removed since.
 
 ## Gestures
 
@@ -91,7 +120,7 @@ The LCD cycles through all three. Crossing one takes over the screen with a post
 
 ## Sound and haptics
 
-Every interaction has a synthesised sound (no audio files) and a haptic: page ticks as you scrub, detents on the dial, keycap clicks, swooshes, a postmark thunk, coins for XP, fanfares for finishing and levelling up. Read in bursts and a **combo** builds up. Android vibrates; iPhone (which has no vibration API) gets the system tap through a hidden iOS 18 switch control. Both can be switched off in Stats → Settings.
+Every interaction has a synthesised sound (no audio files) and a haptic: page ticks as you scrub, detents on the dial, keycap clicks, swooshes, a postmark thunk, coins for XP, fanfares for finishing and levelling up. Read in bursts and a **combo** builds up. Android vibrates; iPhone (which has no vibration API) gets the system tap through a hidden iOS 18 switch control. Both can be switched off in You → Settings.
 
 - **Sound needs a tap first.** Browsers only allow sound after you touch the page, so the audio engine wakes on your first touch and re-wakes whenever the app comes back to the foreground.
 - **iPhone silent switch.** On an iPhone with the silent switch on, web sounds are muted by iOS, but haptics still play.
@@ -107,7 +136,7 @@ Every interaction has a synthesised sound (no audio files) and a haptic: page ti
 
 ## Visitors
 
-Every few minutes, never while you're busy, an animal wanders across the bottom of the screen with its own sound and a terrible pun: a llama, a horse, a duck, a cat, a dino, a snail, a hedgehog, a penguin, a turtle, a flamingo, or (rarely) a unicorn. Tap one to pet it. Pet three different ones for the Zookeeper sticker. Turn them off in Stats → Settings → Visitors.
+Every few minutes, never while you're busy, an animal wanders across the bottom of the screen with its own sound and a terrible pun: a llama, a horse, a duck, a cat, a dino, a snail, a hedgehog, a penguin, a turtle, a flamingo, or (rarely) a unicorn. Tap one to pet it. Pet three different ones for the Zookeeper sticker. Turn them off in You → Settings → Visitors.
 
 ## Easter eggs
 
@@ -154,7 +183,7 @@ Optionally add a Rate Limiting binding named `LIMITER` for platform-level limits
 
 ## Accounts
 
-Log in with a **username (or email) and a password**, and your shelves follow you to any device: phone, laptop, the home-screen app. Stats → Sync & backup → **Sign up**. There are no social features: an account is just your private, encrypted backup.
+Log in with a **username (or email) and a password**, and your shelves follow you to any device: phone, laptop, the home-screen app. You → **Sign up** (or straight from onboarding). There are no social features: an account is just your private, encrypted backup.
 
 It's built like a password manager, so a breach of the server gives an attacker nothing readable:
 
@@ -164,7 +193,9 @@ It's built like a password manager, so a breach of the server gives an attacker 
 - **The server can't read your books.** The shelves are compressed, then encrypted on your phone (AES-256-GCM). The key that encrypts them is stored on the server only in encrypted form. On your device it's a non-extractable key: page code can use it but can't read it out.
 - **No personal data stored.** Your username or email is stored only as a keyed hash, never as text, and nobody is ever emailed. Rate-limit counters use hashes, not IP addresses.
 - **Sessions.** Each login gets a random token. The server keeps only its SHA-256, and it expires after 30 days unused. Logging out ends it; **log out everywhere** ends them all. Changing your password signs out your other devices.
-- **Forgot your password?** When you sign up you get a one-time **recovery code**, and you confirm you've saved it by typing its last four characters. The code sets a new password and keeps your books. We can't reset a password for you, because we can't read your account. That's the point.
+- **Forgot your password?** When you sign up you get a one-time **recovery code**: copy it, or save it as a file. To make sure you've seen it, you type its last four characters while it's still on screen, so there's nothing to memorise. The code sets a new password and keeps your books. We can't reset a password for you, because we can't read your account; that's the point.
+- **Lost the recovery code?** While you're logged in on any device, You → Account → **New recovery code** makes a fresh one (it needs your password), and the old one stops working.
+- **Lost both** (no password, no code, no logged-in device)? The backup can't be opened by anyone, including us. The books on your phone stay where they are, and you can start a new account from them.
 - **Rate limits** on every account action. A quick per-location limit sits in front of durable limits stored in the database, which apply across all of Cloudflare:
 
   | Action | Limit |
@@ -172,13 +203,32 @@ It's built like a password manager, so a breach of the server gives an attacker 
   | Logins | 20 per address and 10 per account, every 10 minutes |
   | Sign-ups | 5 per address per hour |
   | Recovery | 10 per address and 5 per account, per hour |
-  | Backups | 400 saves per account per hour |
+  | Backups | 120 per address per minute (in memory, so backups never write rate-limit rows) |
 
   Wrong passwords lock the account for 1 minute after 5 misses, then 2, 4… up to an hour. Answers carry `Retry-After`.
 - **No user enumeration.** A wrong password and an unknown account get the same answer. Unknown accounts get a made-up salt that never changes.
 - **Delete your account** (it needs your password): the account, its backup and its sessions are removed for good.
 
-The phone stays the main copy, so the app is instant and works offline. The account is the backup and the bridge between devices. Changes go up a couple of seconds after you make them, when the app comes back on screen, and when you're back online. Two devices saving at once merge rather than overwrite.
+The phone stays the main copy, so the app is instant and works offline. The account is the backup and the bridge between devices. Your whole library takes a few hundred KB on the phone at most, so moving it off wouldn't free anything noticeable; it would only make the app wait on the network.
+
+**How syncing works, and why it's cheap.**
+- **Catching up.** When the app opens or comes back on screen (at most once a minute) or you're back online, it reads the backup and merges.
+- **Saving.** After changes, it waits until things go quiet (12 seconds), then saves once, with no read first. A burst of page turns is one save, and leaving the app saves straight away. Nothing is sent when nothing changed.
+- **Two devices at once.** If both save at the same moment, the second gets the first one's copy back, merges, and saves again. Nothing is overwritten.
+- **Retries.** Every save carries an id, so a save retried after a lost answer can't apply twice.
+- **Merging.** Each book keeps its newest version. Removals and resets are remembered, so an old copy can't bring them back. Counts take the higher value.
+
+**What it costs.** Cloudflare's free plan allows 100,000 Worker requests, 5 million D1 rows read and 100,000 rows written a day, and 5 GB of storage.
+
+| Action | D1 cost |
+|---|---|
+| Catching up | 2 rows read |
+| Saving | 2 rows read + 1 row written |
+| Logging in | 3 rows written: the session, its index, and a rate-limit counter |
+
+A daily reader who opens the app a few times and reads in a few sessions makes about 10–20 requests and 5–10 writes a day. The first free limit to run out is Workers requests, at a few thousand daily readers including search and covers. The $5-a-month Workers plan covers about 300,000 requests a day, and D1 writes would only start costing past 50 million a month.
+
+**Sync codes and their limit.** The older sync codes use Workers KV, whose free plan allows just 1,000 writes a day for everyone. They now save at most once per quiet spell, and new users get accounts instead.
 
 **Why Cloudflare D1 and not DynamoDB.**
 - **Credentials.** The Worker reaches D1 through a binding, so there's no access key to store, rotate or leak. DynamoDB would need an AWS key with request signing inside the Worker.
@@ -192,7 +242,9 @@ The phone stays the main copy, so the app is instant and works offline. The acco
 2. **Workers & Pages → shelf-api → Settings → Bindings → Add → D1 database**: variable name **`DB`**, database `shelfie` → Deploy.
 3. **Settings → Variables and Secrets → Add**: type **Secret**, name **`AUTH_SECRET`**, value: 32 or more random characters → Deploy. One way to make one is to paste this into any browser console: `crypto.randomUUID() + crypto.randomUUID()`. Never use the Text type for it. Changing it later signs everyone out and stops every password working.
 4. **Edit code** → paste the new `worker/worker.js` → Deploy. The tables create themselves on first use.
-5. `…/api/health` now shows `"accounts":true`, and the Account tile appears in Stats.
+5. `…/api/health` now shows `"accounts":true`, and the Account section appears in You.
+
+When `worker.js` changes, paste it again and deploy. Tables and new columns are added by themselves.
 
 ## Sync codes, and why data seemed to disappear
 
@@ -203,7 +255,7 @@ Your shelves are stored in the browser. Two things made them look lost:
 
 On top of that, two copies open at once (two tabs, or Chrome and the installed app on Android) used to overwrite each other. That's fixed: every save now merges with what's already stored, and open copies pick up each other's changes live.
 
-**Accounts** (above) fix the rest. Without an account, a **sync code** still works: Stats → Sync & backup → **Turn on sync** creates a sync code on this device. In the other place (the home-screen app, another phone, a laptop) open Stats → **I have a code** and type it. Both copies merge, and from then on they stay in step: after every change, when the app comes back to the screen, and when you're back online.
+**Accounts** (above) fix the rest. Without an account, a **sync code** still works (shown in You while accounts aren't switched on, or if you already use one): **Turn on sync** creates a sync code on this device. In the other place (the home-screen app, another phone, a laptop) open You → **I have a code** and type it. Both copies merge, and from then on they stay in step: after every change, when the app comes back to the screen, and when you're back online.
 
 - **End-to-end encrypted.** The shelves are encrypted in the browser (AES-256-GCM) with a key derived from the code. The Worker stores only ciphertext under a SHA-256 hash of the code. Neither the code nor anything readable ever reaches the server.
 - **Nothing is lost in a merge.** Each book keeps its latest version, removals are remembered (so a removed book doesn't come back from another copy), the reading log keeps the higher count per day, and badges and eggs are pooled.
@@ -233,26 +285,34 @@ Synced copies expire after 400 days without a save.
 
 ---
 
+## The arcade
+
+- **Keycaps.** Sculpted and glossy, with a streak of light like translucent keycaps. They press down fast and bounce back up, with a coloured glow underneath that brightens while you hold.
+- **Round arcade buttons** for adding pages (+1, +5, +10, +25), and a ▶ on START.
+- **Fairy lights** strung over the macropad twinkle at their own pace. They chase on big moments: finishing a book, a goal, a level, a sticker, an import, a jackpot.
+- **Neon.** The shelf you're on glows like a sign and flickers now and then.
+- **Levers** in the danger zone.
+- **Jackpot.** Now and then, reading pays out bonus XP with an arcade poster. It happens at most once every ten minutes, so it stays a surprise.
+
 ## Motion, and keeping the phone cool
 
-Shelfie keeps moving while it's open, even when you're just looking, because that's half the fun:
+Shelfie keeps moving while it's open, even when you're just looking:
 - the liquid ripples;
 - the cover on top drifts slowly;
 - the LED blinks;
 - the shelf name scrolls behind the pile;
 - the + stamp breathes;
+- the lights twinkle;
 - the critters wander.
 
-Every few seconds of quiet, something does a little fidget: the stamp wiggles, the dial ring glows, the keys hop, the liquid sloshes.
+Every few seconds of quiet, something fidgets: the stamp wiggles, the dial ring glows, the keys hop, the liquid sloshes. Springs are tuned to glide (about half a second, with a little overshoot) rather than snap.
 
 It's built so that motion stays cheap:
 
-- **On the GPU.** The ambient animations move or fade whole layers (transform and opacity only), which the GPU composites without the page re-laying out. The cover art's own shapes (drawn as SVG, which uses the CPU) dance for 12 seconds when a stamp lands on top. After that, the GPU drift takes over.
-- **A gentle liquid.** At rest, the liquid redraws 25 times a second on a timer, so the browser idles in between. While you're scrubbing it runs at full frame rate. It stops when the app is in the background or the cover is empty.
-- **Idle cost.** In a headless browser (software rendering, the worst case), all the idle motion costs about 4–5% of one CPU core. A phone's GPU does much of it for less.
-- **Cheap shadows and grain.** Shadows are pre-blurred layers, not live filters, and the grain is a static background.
-- **Blur only when needed.** The background blur only exists while a panel is open.
-- **A windowed pile.** Only the stamps near the top of the pile exist on the page, whatever the size of your library.
+- **On the GPU.** Ambient animations move or fade whole layers (transform and opacity only), and glows are pre-blurred layers that only fade. The cover art's own shapes (SVG, which the CPU draws) dance for 12 seconds when a stamp lands on top. After that, the GPU drift takes over.
+- **A gentle liquid.** At rest, the liquid redraws 25 times a second on a timer, so the browser idles in between.
+- **Panels.** While a panel (Stats, You, search) is open, the stage behind it holds still, so the panel gets the whole frame budget. Panels don't blur what's behind them; they dim it. Stats is built in idle time ahead of use, so pulling it up does no heavy work.
+- **Measured.** Pulling Stats up with the CPU slowed 4× now has 1–4 long frames instead of 11–19.
 - **Reduced Motion.** With Reduce Motion switched on in your phone's settings, all of this stops.
 
 ## Sharp covers
@@ -262,8 +322,8 @@ It's built so that motion stays cheap:
 
 ## Home screen, and chai
 
-- **Add to home screen.** A guide that matches your browser: pictures for iPhone and iPad Safari (including iOS 26's ••• menu) and Mac Safari, steps for Firefox, Edge and Chrome on iPhone, and the one-tap install button where Chrome or Edge offer one. Apps' built-in browsers get an "Open in Safari" link. It's offered once on a later visit (never the first), and once more at most two weeks later. After that it's only the **Add to home screen** key in Stats, and it disappears once Shelfie is installed.
-- **Chip in for a chai.** A ticket at the very bottom of Stats, after everything else. It's never a pop-up and never in the way of reading.
+- **Add to home screen.** You → **Add to home screen** shows a guide that matches your browser: pictures for iPhone and iPad Safari (including iOS 26's ••• menu) and Mac Safari, steps for Firefox, Edge and Chrome on iPhone, and the one-tap install button where Chrome or Edge offer one. Apps' built-in browsers get an "Open in Safari" link. It's offered once on a later visit (never the first), and once more at most two weeks later. After that it's only the **Add to home screen** key in Stats, and it disappears once Shelfie is installed.
+- **Chip in for a chai.** A ticket at the very bottom of You, after everything else. It's never a pop-up and never in the way of reading.
 
 ---
 
@@ -302,6 +362,7 @@ js/
   install.js          How this browser adds a web app to the home screen (from the track app)
   guide.js            Picture guides for adding to the home screen on Apple devices
   home.js             The add-to-home-screen pop-up and the chai card
+  lever.js            The arcade lever (pull all the way down to confirm)
   util.js             Safe DOM builder, seeded random
 worker/worker.js      The Cloudflare Worker: holds the Google key, searches, covers, accounts (D1), encrypted backups
 tests/

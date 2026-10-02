@@ -79,8 +79,8 @@ function show({ title, text, tone = "lime", cta = "GOT IT" }, r) {
     } catch {}
     feel("pop", "light");
     if (!prefersReducedMotion()) {
-      ring.animate([{ opacity: 0, transform: "scale(1.3)" }, { opacity: 1, transform: "none" }], { duration: 360, easing: "cubic-bezier(.2,1.2,.4,1)" });
-      bubble.animate([{ opacity: 0, transform: `translateY(${below ? -14 : 14}px) scale(.9)` }, { opacity: 1, transform: "none" }], { duration: 460, delay: 120, easing: "cubic-bezier(.2,1.4,.4,1)", fill: "backwards" });
+      ring.animate([{ opacity: 0, transform: "scale(1.3)" }, { opacity: 1, transform: "none" }], { duration: 520, easing: "cubic-bezier(.22,1.2,.36,1)" });
+      bubble.animate([{ opacity: 0, transform: `translateY(${below ? -14 : 14}px) scale(.9)` }, { opacity: 1, transform: "none" }], { duration: 640, delay: 160, easing: "cubic-bezier(.22,1.25,.36,1)", fill: "backwards" });
     }
     const close = () => {
       wrap.removeEventListener("click", close);

@@ -225,3 +225,52 @@ test("CORS: the site may send a token with POST and PUT", async () => {
   assert.match(res.headers.get("Access-Control-Allow-Headers"), /Authorization/);
   assert.match(res.headers.get("Access-Control-Allow-Methods"), /POST/);
 });
+
+test("a save retried after a lost answer applies once, and a different save still conflicts", async () => {
+  const a = await signup();
+  const sealed = await A.seal(a.dataKey, { n: 1 });
+  const first = await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...sealed, base: 0, op: "op-aaaaaaaa1" }) });
+  assert.equal(first.body.rev, 1);
+  const retry = await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...sealed, base: 0, op: "op-aaaaaaaa1" }) });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.rev, 1, "no second write");
+  const other = await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...sealed, base: 0, op: "op-bbbbbbbb2" }) });
+  assert.equal(other.status, 409);
+  assert.equal((await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...sealed, base: 1, op: "bad op!" }) })).status, 400);
+});
+
+test("backups cost no database writes beyond the save itself", async () => {
+  const a = await signup();
+  const before = env.DB.rows("SELECT COUNT(*) n FROM hits")[0].n;
+  for (let i = 0; i < 5; i++) await call("/api/vault", { token: a.token });
+  await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...(await A.seal(a.dataKey, { n: 1 })), base: 0 }) });
+  assert.equal(env.DB.rows("SELECT COUNT(*) n FROM hits")[0].n, before, "no rate-limit rows written for backups");
+});
+
+test("a new recovery code replaces the old one (and needs the password)", async () => {
+  const a = await signup();
+  const pre = await call("/api/auth/prelogin", { body: { login: "ada" } });
+  const { auth, encKey } = await A.fromPassword(PW, pre.body.salt, pre.body.kdf);
+  const key = await A.unwrap(a.wrapped, encKey, true);
+  const code = "BBBBCCCCDDDDEEEEFFFFGGGG";
+  const r = await A.fromRecovery(code);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.wrapKey("raw", key, r.encKey, { name: "AES-GCM", iv });
+  const rwrapped = `${Buffer.from(iv).toString("base64")}.${Buffer.from(ct).toString("base64")}`;
+  const wrong = await A.fromPassword("nope nope nope", pre.body.salt, pre.body.kdf);
+  assert.equal((await call("/api/auth/recovery", { token: a.token, body: { auth: wrong.auth, rauth: r.auth, rwrapped } })).status, 401);
+  assert.equal((await call("/api/auth/recovery", { token: a.token, body: { auth, rauth: r.auth, rwrapped } })).status, 200);
+  // The new code works; the old one doesn't.
+  const begin = await call("/api/auth/recover/begin", { body: { login: "ada" } });
+  assert.equal(begin.body.rwrapped, rwrapped);
+  const old = await A.fromRecovery(A.cleanRecovery(a.recovery));
+  await assert.rejects(A.unwrap(begin.body.rwrapped, old.encKey));
+});
+
+test("databases made before the op column get it added", async () => {
+  env.DB.db.exec("CREATE TABLE vaults (uid TEXT PRIMARY KEY, rev INTEGER NOT NULL, iv TEXT NOT NULL, ct TEXT NOT NULL, updated INTEGER NOT NULL)");
+  const a = await signup();
+  const r = await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...(await A.seal(a.dataKey, { n: 1 })), base: 0, op: "op-cccccccc3" }) });
+  assert.equal(r.status, 200);
+  assert.equal(env.DB.rows("SELECT op FROM vaults")[0].op, "op-cccccccc3");
+});

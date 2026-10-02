@@ -57,7 +57,7 @@ export function createDeck(root, opts) {
     el.style.position = "absolute";
     el.inert = true;
     root.append(el);
-    it.m = motion(from, renderFor(el), { stiffness: 340, damping: 30, s: { stiffness: 420, damping: 28 } });
+    it.m = motion(from, renderFor(el), { stiffness: 190, damping: 21, s: { stiffness: 240, damping: 20 } });
     return it;
   }
 
@@ -135,7 +135,7 @@ export function createDeck(root, opts) {
           el.classList.add("card");
           old.el.replaceWith(el);
           old.el = el;
-          old.m = motion({ ...old.m.values }, renderFor(el), { stiffness: 340, damping: 30 });
+          old.m = motion({ ...old.m.values }, renderFor(el), { stiffness: 190, damping: 21 });
         }
         old.key = n.key;
         return old;
@@ -164,7 +164,7 @@ export function createDeck(root, opts) {
     it.el.style.zIndex = String(200 - Math.round((j - i) * 2));
     it.el.classList.toggle("top", j === i);
     it.el.inert = j !== i;
-    it.m.to(slotPos(j - i), {}, { stiffness: 260, damping: 22 });
+    it.m.to(slotPos(j - i), {}, { stiffness: 150, damping: 17 });
   }
 
   /* ---------------- gestures ---------------- */
@@ -383,7 +383,7 @@ export function createDeck(root, opts) {
     if (zone) {
       const zr = zone.el.getBoundingClientRect();
       const rr = root.getBoundingClientRect();
-      it.m.to({ x: zr.left + zr.width / 2 - (rr.left + rr.width / 2), y: zr.top + zr.height / 2 - (rr.top + rr.height / 2), s: 0.15, o: 0, r: 20 }, {}, { stiffness: 300, damping: 26 });
+      it.m.to({ x: zr.left + zr.width / 2 - (rr.left + rr.width / 2), y: zr.top + zr.height / 2 - (rr.top + rr.height / 2), s: 0.15, o: 0, r: 20 }, {}, { stiffness: 200, damping: 22 });
       buzz([10, 30, 20]);
       return opts.onDrop?.(it.id, zone.id);
     }

@@ -195,8 +195,12 @@ export function createSync({ base, get, put, merge, onStatus }) {
       tell({ state: "off", at: 0, error: "" });
     },
     now: () => round(),
-    /** After a change: sync a moment later (changes in a burst go together). */
-    soon(ms = 2500) {
+    /**
+     * After a change: sync once things go quiet (changes in a burst go together). Sync codes
+     * live in Workers KV, whose free plan allows 1,000 writes a day for everyone, so saves are
+     * batched generously; leaving the app saves straight away.
+     */
+    soon(ms = 15_000) {
       if (!cfg) return;
       clearTimeout(timer);
       timer = setTimeout(() => {

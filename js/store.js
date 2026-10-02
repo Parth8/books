@@ -303,6 +303,14 @@ export function findEgg(state, id, egg, now = new Date()) {
   return finish(state, s, [{ type: "egg", egg, fresh: true }], now);
 }
 
+/** A bonus out of nowhere (the arcade jackpot): extra XP, 10 to 100. */
+export function jackpot(state, amount, now = new Date()) {
+  const s = clone(state);
+  const n = clampInt(amount, 10, 100, 25);
+  s.xp += n;
+  return finish(state, s, [{ type: "jackpot", amount: n }], now);
+}
+
 /** kind: "day" (pages), "month" or "year" (books). */
 export function setGoal(state, goal, kind = "day", now = new Date()) {
   const field = { day: "goal", month: "goalMonth", year: "goalYear" }[kind];
@@ -361,6 +369,22 @@ export function merge(a, b) {
     ...((b.nameAt || 0) > (a.nameAt || 0) ? { name: b.name || "", nameAt: b.nameAt } : { name: a.name || b.name || "", nameAt: a.nameAt || b.nameAt || 0 }),
     ...(a._owl || b._owl ? { _owl: [a._owl, b._owl].filter(Boolean).sort().pop() } : {}),
   };
+}
+
+/**
+ * Restore from a saved copy (a backup file). Its books come back even if this device was reset
+ * or removed them since, and nothing here is deleted: the two are merged.
+ */
+export function restore(state, file, now = new Date()) {
+  const here = normalise(state);
+  const copy = normalise(file);
+  const t = now.getTime();
+  const have = new Set(here.books.map((b) => b.id));
+  const gone = { ...here.gone };
+  // Books from the file that this device doesn't have: fresh, so they beat any old removal.
+  const books = copy.books.map((b) => (have.has(b.id) ? b : (delete gone[b.id], { ...b, touched: t })));
+  // The file counts as made after the newest reset (otherwise the merge would empty it).
+  return merge({ ...here, gone }, { ...copy, books, gone: {}, resetAt: here.resetAt || 0 });
 }
 
 /** Fill in anything an older copy is missing. */
