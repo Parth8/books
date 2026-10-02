@@ -40,7 +40,7 @@ const taps = new WeakMap();
 
 /**
  * Poke a book. Returns { egg, label } for whatever played.
- * `art` is the .book element from cover.js.
+ * `art` is the stamp element (stamp.js): tricks move its .book-3d window and draw in .book-fx.
  */
 export async function poke(book, art, count = 0) {
   const now = performance.now();

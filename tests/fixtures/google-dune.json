@@ -1,0 +1,8 @@
+{
+  "items": [
+    { "id": "B1hSG45JCX4C", "volumeInfo": { "title": "Dune", "authors": ["Frank Herbert"], "publishedDate": "1990-09-01", "pageCount": 535, "categories": ["Fiction"], "description": "Set on the desert planet <b>Arrakis</b>, Dune is the story of the boy Paul Atreides.", "imageLinks": { "thumbnail": "http://books.google.com/books/content?id=B1hSG45JCX4C&printsec=frontcover&img=1&zoom=1&edge=curl&source=gbs_api" } } },
+    { "id": "1BbTEAAAQBAJ", "volumeInfo": { "title": "Dune Messiah", "authors": ["Frank Herbert"], "publishedDate": "2019", "pageCount": 336, "imageLinks": { "thumbnail": "http://books.google.com/books/content?id=1BbTEAAAQBAJ&printsec=frontcover&img=1&zoom=1&source=gbs_api" } } },
+    { "id": "bad id!", "volumeInfo": { "title": "Rejected: bad id" } },
+    { "id": "Xq0ZAQAAIAAJ", "volumeInfo": { "title": "Children of Dune", "authors": ["Frank Herbert"], "publishedDate": "1976" } }
+  ]
+}

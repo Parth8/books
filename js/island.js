@@ -27,7 +27,12 @@ export function createIsland() {
   const queue = [];
   let busy = false;
   let skip = null;
-  el.addEventListener("click", () => skip?.());
+  let action = null;
+  el.addEventListener("click", () => {
+    action?.();
+    action = null;
+    skip?.();
+  });
 
   async function run() {
     if (busy) return;
@@ -40,6 +45,7 @@ export function createIsland() {
   }
 
   async function showOne(m) {
+    action = m.action || null;
     el.dataset.tone = m.tone || "pink";
     icon.textContent = m.icon || "✨";
     title.textContent = m.title || "";

@@ -1,852 +1,828 @@
-// Shelfie: the screen. State lives in store.js; this file draws it and turns every change into
-// a little celebration.
+// Shelfie: the screen. State lives in store.js; this file wires gestures to it and turns every
+// change into motion.
+//
+//   top      LCD status (tap ×5 for a secret) and the shelf tape: drag it to switch shelves
+//   middle   the pile of stamps (see deck.js for its gestures)
+//   bottom   the dock, which changes with the stamp on top: a macropad with a page dial while
+//            you're reading, START/SHUFFLE for your want pile, feeling keys for finished books
+//   pullbar  pull up for stats
 
-import { h, $, $$, buzz, clamp, fmt, play, prefersReducedMotion, SPRING } from "./util.js";
+import { h, $, buzz, clamp, fmt, prefersReducedMotion } from "./util.js";
 import * as S from "./store.js";
-import { bookArt, tiltable } from "./cover.js";
+import { bookStamp, addStamp, feelOf, liquidOf } from "./stamp.js";
+import { createDeck } from "./deck.js";
+import { createLiquid } from "./liquid.js";
+import { createKnob } from "./knob.js";
+import { createPanel } from "./panel.js";
 import { createIsland } from "./island.js";
-import { createTabs } from "./tabs.js";
-import { createWheel } from "./wheel.js";
-import { createDeck } from "./swipe.js";
+import { poster } from "./poster.js";
+import { createHints } from "./hints.js";
 import { burst, rain, floatText } from "./confetti.js";
-import { poke, themedEgg } from "./eggs.js";
+import { poke } from "./eggs.js";
 import { searchBooks } from "./search.js";
-import { sheet } from "./sheet.js";
+import { Spring, Velocity, rubber, project } from "./physics.js";
 
 let state = S.load(globalThis.localStorage);
 const island = createIsland();
+const hints = createHints($("#hint-slot"));
 
-const SHELF_META = {
-  reading: { label: "Reading", emoji: "📖", tone: "#ff3d7f" },
-  want: { label: "Want", emoji: "✨", tone: "#c6ff3d" },
-  read: { label: "Read", emoji: "🏆", tone: "#2de2ff" },
+const SHELF = {
+  reading: { label: "READING", tone: "#2b3bff", ink: "#ffffff", rgb: [43, 59, 255] },
+  want: { label: "WANT", tone: "#ff5a1f", ink: "#0d0d0d", rgb: [255, 90, 31] },
+  read: { label: "READ", tone: "#ffd60a", ink: "#0d0d0d", rgb: [255, 214, 10] },
 };
+const ORDER = S.SHELVES;
 
 const STARTER = [
-  { title: "Dune", author: "Frank Herbert", cover: 11481354, pages: 608, year: 1965, shelf: "reading", page: 212 },
-  { title: "The Hitchhiker's Guide to the Galaxy", author: "Douglas Adams", cover: 12986869, pages: 216, year: 1979, shelf: "reading", page: 40 },
-  { title: "Harry Potter and the Philosopher's Stone", author: "J. K. Rowling", cover: 15155833, pages: 302, year: 1997, shelf: "want" },
-  { title: "The Hobbit", author: "J.R.R. Tolkien", cover: 14627509, pages: 310, year: 1937, shelf: "want" },
-  { title: "Project Hail Mary", author: "Andy Weir", cover: 11200092, pages: 496, year: 2021, shelf: "want" },
-  { title: "Nineteen Eighty-Four", author: "George Orwell", cover: 9267242, pages: 318, year: 1949, shelf: "want" },
-  { title: "The Great Gatsby", author: "F. Scott Fitzgerald", cover: 10590366, pages: 185, year: 1925, shelf: "read", rating: 4 },
+  { title: "Dune", author: "Frank Herbert", cover: 11481354, pages: 608, year: 1965, shelf: "reading", page: 212, cats: "Science fiction" },
+  { title: "The Hitchhiker's Guide to the Galaxy", author: "Douglas Adams", cover: 12986869, pages: 216, year: 1979, shelf: "reading", page: 40, cats: "Comedy" },
+  { title: "Harry Potter and the Philosopher's Stone", author: "J. K. Rowling", cover: 15155833, pages: 302, year: 1997, shelf: "want", cats: "Fantasy" },
+  { title: "The Hobbit", author: "J.R.R. Tolkien", cover: 14627509, pages: 310, year: 1937, shelf: "want", cats: "Fantasy" },
+  { title: "Project Hail Mary", author: "Andy Weir", cover: 11200092, pages: 496, year: 2021, shelf: "want", cats: "Science fiction" },
+  { title: "Nineteen Eighty-Four", author: "George Orwell", cover: 9267242, pages: 318, year: 1949, shelf: "want", cats: "Dystopia" },
+  { title: "The Great Gatsby", author: "F. Scott Fitzgerald", cover: 10590366, pages: 185, year: 1925, shelf: "read", rating: 4, cats: "Classic" },
   { title: "Midnight Garden Club", author: "You, maybe", pages: 280, shelf: "want" },
 ];
+
+const book = (id) => state.books.find((b) => b.id === id);
 
 /* ============================================================
    Changes and celebrations
    ============================================================ */
 
-function commit(result, at) {
+function commit(result, at, { keepStats = false } = {}) {
   const before = state;
   state = result.state;
   S.save(globalThis.localStorage, state);
   const events = [...result.events];
-  const today0 = S.pagesOn(before);
-  const today1 = S.pagesOn(state);
-  if (today0 < state.goal && today1 >= state.goal) events.push({ type: "goal" });
+  if (S.pagesOn(before) < state.goal && S.pagesOn(state) >= state.goal) events.push({ type: "goal" });
   celebrate(events, at);
-  render();
+  renderHud();
+  if (stats.isOpen && !keepStats) renderStats();
   return result;
+}
+
+const posters = [];
+let posterUp = false;
+function queuePoster(p) {
+  posters.push(p);
+  if (!posterUp) nextPoster();
+}
+function nextPoster() {
+  const p = posters.shift();
+  if (!p) return (posterUp = false);
+  posterUp = true;
+  poster({ ...p, onDone: () => setTimeout(nextPoster, 120) });
 }
 
 function celebrate(events, at) {
   const xp = events.find((e) => e.type === "xp")?.amount || 0;
-  if (xp && at) floatText(at, `+${xp} XP`);
+  if (xp && at) floatText(at, `+${xp} XP`, "#e7ff3d");
   const msgs = [];
   for (const e of events) {
-    if (e.type === "starter") msgs.push({ icon: "📚", title: "Starter stack loaded", sub: "Tap Dune, then poke its cover", tone: "pink" });
-    if (e.type === "added") msgs.push({ icon: "📚", title: "On the shelf", sub: e.book.title, tone: "pink" });
-    if (e.type === "moved" && e.shelf === "reading") msgs.push({ icon: "📖", title: "Now reading", sub: e.book.title, tone: "pink" });
-    if (e.type === "moved" && e.shelf === "want") msgs.push({ icon: "✨", title: "Saved for later", sub: e.book.title, tone: "lime" });
+    if (e.type === "starter") msgs.push({ icon: "📚", title: "STARTER STACK LOADED", sub: "Swipe through, drag a book up to read", tone: "pink" });
+    if (e.type === "added") msgs.push({ icon: "📮", title: `ADDED TO ${SHELF[e.book.shelf].label}`, sub: e.book.title, tone: "pink" });
+    if (e.type === "moved") msgs.push({ icon: e.shelf === "reading" ? "📖" : e.shelf === "want" ? "🔖" : "✅", title: `MOVED TO ${SHELF[e.shelf].label}`, sub: e.book.title, tone: e.shelf === "want" ? "sun" : "cyan" });
     if (e.type === "milestone") {
-      msgs.push({ icon: { 25: "🌒", 50: "🌓", 75: "🌔" }[e.pct], title: `${e.pct}% through`, sub: e.book.title, tone: "lime" });
-      if (at) burst(at, { count: 40 + e.pct / 2 });
+      msgs.push({ icon: { 25: "🌒", 50: "🌓", 75: "🌔" }[e.pct], title: `${e.pct}% THROUGH`, sub: e.book.title, tone: "lime" });
+      burst(at || deckEl, { count: 50 + e.pct / 2 });
     }
-    if (e.type === "finished") {
-      msgs.push({ icon: "🏁", title: "Book finished!", sub: e.book.title, tone: "cyan", big: true });
-      rain({ count: 220, emoji: ["📚", "🎉", "⭐", "🏆"] });
-    }
-    if (e.type === "goal") {
-      msgs.push({ icon: "🎯", title: "Daily goal smashed", sub: `${state.goal} pages today`, tone: "lime", big: true });
-      burst(at || $("#goal"), { count: 90, emoji: ["🎯", "✅"] });
-    }
-    if (e.type === "streak") msgs.push({ icon: "🔥", title: `${e.days}-day streak`, sub: "Come back tomorrow to keep it", tone: "sun" });
-    if (e.type === "level") {
-      msgs.push({ icon: "🆙", title: `Level ${e.level}`, sub: `You're a ${e.title} now`, tone: "violet", big: true });
-      rain({ count: 160, emoji: ["🆙", "⚡"] });
-      bump($("#level"));
-    }
-    if (e.type === "badge") {
-      msgs.push({ icon: e.badge.emoji, title: `Badge: ${e.badge.name}`, sub: e.badge.text, tone: "sun" });
-      if (!events.some((x) => x.type === "level" || x.type === "finished")) burst(at || island.el, { count: 50 });
-    }
-    if (e.type === "egg" && e.fresh) msgs.push({ icon: "🥚", title: `Easter egg: ${e.label}`, sub: "New egg found", tone: "pink" });
+    if (e.type === "finished")
+      queuePoster({ kicker: "BOOK FINISHED", lines: ["DONE."], sub: e.book.title, tone: "#ffd60a", ink: "#0d0d0d", art: bookStamp({ ...e.book, shelf: "read", finished: new Date().toISOString() }), emoji: ["📚", "⭐", "🎉"] });
+    if (e.type === "goal") queuePoster({ kicker: `${state.goal} PAGES TODAY`, lines: ["GOAL", "SMASHED."], sub: "Daily goal done. Anything more is a bonus.", tone: "#ff5a1f", ink: "#0d0d0d", emoji: ["🎯", "🔥"] });
+    if (e.type === "streak") msgs.push({ icon: "🔥", title: `${e.days}-DAY STREAK`, sub: "Come back tomorrow to keep it", tone: "sun" });
+    if (e.type === "level") queuePoster({ kicker: `NOW A ${e.title.toUpperCase()}`, lines: ["LEVEL", `${String(e.level).padStart(2, "0")}.`], sub: "Keep turning pages.", tone: "#2b3bff", ink: "#ffffff", emoji: ["🆙", "⚡"] });
+    if (e.type === "badge") msgs.push({ icon: e.badge.emoji, title: `BADGE: ${e.badge.name.toUpperCase()}`, sub: e.badge.text, tone: "violet" });
+    if (e.type === "egg" && e.fresh) msgs.push({ icon: "🥚", title: `EGG: ${e.label.toUpperCase()}`, sub: "New easter egg found", tone: "pink" });
   }
   if (!msgs.length && xp) {
     const p = S.pagesOn(state);
-    msgs.push({ icon: "⚡", title: `${p} / ${state.goal} pages today`, sub: S.levelProgress(state.xp).title, tone: "lime", bar: Math.min(1, p / state.goal) });
+    msgs.push({ icon: "⚡", title: `${p}/${state.goal} PAGES TODAY`, sub: S.levelProgress(state.xp).title, tone: "lime", bar: Math.min(1, p / state.goal) });
   }
   if (msgs.length && xp) Object.assign(msgs[0], { value: xp, unit: " XP" });
   for (const m of msgs) island.say(m);
 }
 
-const bump = (el) => play(el, [{ transform: "scale(1)" }, { transform: "scale(1.35) rotate(-6deg)" }, { transform: "none" }], { duration: 560, easing: SPRING });
-
 /* ============================================================
-   Header, stats, badges
+   HUD: the LCD and the shelf tape
    ============================================================ */
 
-function greeting() {
-  const hr = new Date().getHours();
-  if (hr < 4) return "Night owl mode 🦉";
-  if (hr < 12) return "Morning, bookworm ☀️";
-  if (hr < 17) return "Afternoon read? 📖";
-  if (hr < 21) return "Evening chapter 🌆";
-  return "One more chapter? 🌙";
-}
-
-let lastStreak = null;
-function renderTop() {
-  $("#greet").textContent = greeting();
+function renderHud() {
   const lp = S.levelProgress(state.xp);
-  $("#lvl-n").textContent = lp.level;
-  $("#level").setAttribute("aria-label", `Level ${lp.level}, ${lp.title}. Open your stats`);
-  $("#lvl-bar").style.strokeDashoffset = String(97.4 * (1 - lp.frac));
-  $("#xp-title").textContent = `Lv ${lp.level} · ${lp.title}`;
-  $("#xp-fill").style.width = `${(lp.frac * 100).toFixed(1)}%`;
-  $("#xp-num").textContent = `${fmt(lp.into)} / ${fmt(lp.need)} XP`;
+  $("#lcd-text").textContent = `LV${String(lp.level).padStart(2, "0")} · ${fmt(state.xp)} XP`;
+  $("#lcd-xp").style.width = `${(lp.frac * 100).toFixed(1)}%`;
   const st = S.streak(state);
-  $("#streak-n").textContent = st;
-  $("#streak").classList.toggle("lit", st > 0);
-  $("#streak").setAttribute("aria-label", `${st}-day reading streak`);
-  if (lastStreak != null && st > lastStreak) bump($("#streak"));
-  lastStreak = st;
+  $("#lcd-streak").textContent = `🔥${st}`;
+  $("#lcd").classList.toggle("lit", st > 0);
+  $("#lcd").setAttribute("aria-label", `Level ${lp.level}, ${state.xp} XP, ${st}-day streak. Open your stats`);
+  for (const t of tapeItems) t.querySelector("sup").textContent = String(S.shelf(state, t.dataset.shelf).length).padStart(2, "0");
 }
 
-function renderStats() {
-  const today = S.pagesOn(state);
-  const frac = Math.min(1, today / state.goal);
-  $("#goal-n").textContent = today;
-  $("#goal-of").textContent = `/ ${state.goal}`;
-  $("#goal-bar").style.strokeDashoffset = String(169.6 * (1 - frac));
-  $("#goal").classList.toggle("done", today >= state.goal);
-  $("#goal").setAttribute("aria-label", `${today} of ${state.goal} pages today. Change your goal`);
-  const wk = S.week(state);
-  const top = Math.max(state.goal, ...wk.map((d) => d.pages));
-  const names = ["S", "M", "T", "W", "T", "F", "S"];
-  $("#week").replaceChildren(
-    ...wk.map((d, i) =>
-      h(
-        "span",
-        { class: `wbar${d.pages >= state.goal ? " hit" : ""}${i === 6 ? " today" : ""}`, vars: { "--h": `${Math.max(4, (d.pages / top) * 100)}%` }, title: `${d.pages} pages` },
-        h("i"),
-        h("small", { text: names[new Date(`${d.day}T12:00`).getDay()] }),
-      ),
-    ),
-  );
-  const sum = wk.reduce((a, d) => a + d.pages, 0);
-  $("#week-label").textContent = `${fmt(sum)} this week`;
-  $("#tot-books").textContent = fmt(S.finishedCount(state));
-  $("#tot-pages").textContent = fmt(S.totalPages(state));
-}
-
-function renderBadges() {
-  const got = S.BADGES.filter((b) => state.badges[b.id]);
-  const strip = $("#badge-strip");
-  strip.replaceChildren(
-    ...got.map((b) => h("span", { class: "badge got", title: `${b.name}: ${b.text}` }, h("span", { class: "be", text: b.emoji }), h("small", { text: b.name }))),
-    h("span", { class: "badge locked" }, h("span", { class: "be", text: "🔒" }), h("small", { text: `${S.BADGES.length - got.length} to go` })),
-  );
-}
-
-/* ============================================================
-   The carousel
-   ============================================================ */
-
-const track = $("#track");
-const tabs = createTabs(
-  $("#tabs"),
-  S.SHELVES.map((id) => ({ id, ...SHELF_META[id] })),
-  { onChange: (id) => renderShelf(id, { switching: true }) },
+const tape = $("#tape");
+const track = $("#tape-track");
+const tapeItems = ORDER.map((id) =>
+  h("button", { type: "button", role: "tab", class: "tape-item", "data-shelf": id, "aria-selected": "false" }, h("b", { text: SHELF[id].label }), h("sup", { text: "00" })),
 );
+track.append(...tapeItems);
+let centers = [];
+const measureTape = () => (centers = tapeItems.map((t) => t.offsetLeft + t.offsetWidth / 2));
+const tapeX = new Spring(0, { stiffness: 260, damping: 28, onChange: (x) => paintTape(x) });
 
-function cardFor(book) {
-  const art = bookArt(book);
-  const pct = Math.round((book.page / book.pages) * 100);
-  let foot;
-  if (book.shelf === "reading") {
-    foot = h(
-      "div",
-      { class: "card-foot" },
-      h("div", { class: "prog" }, h("i", { vars: { "--p": `${pct}%` } })),
-      h(
-        "div",
-        { class: "card-row" },
-        h("span", { class: "card-sub", text: `p. ${book.page} of ${book.pages} · ${pct}%` }),
-        h("button", { type: "button", class: "pill plus", "data-act": "plus", "aria-label": `Log 10 pages of ${book.title}`, text: "+10" }),
-      ),
-    );
-  } else if (book.shelf === "want") {
-    foot = h(
-      "div",
-      { class: "card-foot" },
-      h(
-        "div",
-        { class: "card-row" },
-        h("span", { class: "card-sub", text: `${book.pages} pages${book.year ? ` · ${book.year}` : ""}` }),
-        h("button", { type: "button", class: "pill go", "data-act": "start", "aria-label": `Start reading ${book.title}`, text: "Start ▸" }),
-      ),
-    );
-  } else {
-    foot = h(
-      "div",
-      { class: "card-foot" },
-      h(
-        "div",
-        { class: "card-row" },
-        h("span", { class: "stars sm", "aria-label": book.rating ? `${book.rating} stars` : "Not rated" }, [1, 2, 3, 4, 5].map((n) => h("i", { class: n <= book.rating ? "on" : "", text: "★" }))),
-        h("span", { class: "card-sub", text: book.finished ? new Date(book.finished).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "" }),
-      ),
-    );
-  }
-  const card = h(
-    "article",
-    { class: `card ${book.shelf}`, "data-id": book.id, vars: { "--c1": art.style.getPropertyValue("--c1"), "--c2": art.style.getPropertyValue("--c2") } },
-    h(
-      "div",
-      { class: "card-in" },
-      h("i", { class: "card-glow", "aria-hidden": "true" }),
-      h("button", { type: "button", class: "card-open", "aria-label": `${book.title}${book.author ? ` by ${book.author}` : ""}. Open` }, art),
-      h("h3", { class: "card-title", text: book.title }),
-      h("p", { class: "card-author", text: book.author || "Unknown author" }),
-      foot,
-      book.shelf === "read" ? h("span", { class: "done-stamp", "aria-hidden": "true", text: "DONE" }) : null,
-    ),
-  );
-  tiltable(card.querySelector(".card-open"));
-  return card;
+/** Fractional shelf index for a track offset. */
+function fracAt(x) {
+  const mid = tape.clientWidth / 2 - x;
+  if (mid <= centers[0]) return 0;
+  for (let k = 0; k < centers.length - 1; k++) if (mid <= centers[k + 1]) return k + (mid - centers[k]) / (centers[k + 1] - centers[k]);
+  return centers.length - 1;
 }
+const xFor = (k) => tape.clientWidth / 2 - centers[k];
 
-function addCard() {
-  return h(
-    "article",
-    { class: "card add", "data-id": "add" },
-    h(
-      "div",
-      { class: "card-in" },
-      h(
-        "button",
-        { type: "button", class: "add-btn", "aria-label": "Add a book" },
-        h("span", { class: "add-ring", "aria-hidden": "true" }),
-        h("span", { class: "add-plus", "aria-hidden": "true", text: "+" }),
-        h("b", { text: "Add a book" }),
-        h("small", { text: "Search millions of titles" }),
-      ),
-    ),
-  );
-}
-
-let shownShelf = null;
-let order = [];
-const cardCache = new Map(); // id -> { key, el }: unchanged books keep their card (and loaded cover)
-const cardKey = (b) => JSON.stringify([b.title, b.author, b.cover, b.pages, b.shelf, b.rating, b.finished]);
-
-/** Small changes (a page logged) update the card in place, so its bar can glide. */
-function patchCard(el, book) {
-  if (book.shelf !== "reading") return;
-  const pct = Math.round((book.page / book.pages) * 100);
-  el.querySelector(".prog i")?.style.setProperty("--p", `${pct}%`);
-  const sub = el.querySelector(".card-sub");
-  if (sub) sub.textContent = `p. ${book.page} of ${book.pages} · ${pct}%`;
-}
-
-async function renderShelf(name = tabs.current, { switching = false, focusId = null } = {}) {
-  let books = S.shelf(state, name);
-  const changed = shownShelf !== name;
-  const fresh = switching || changed;
-  const prevScroll = track.scrollLeft;
-  shownShelf = name;
-  document.body.dataset.shelf = name;
-  const animate = fresh && !prefersReducedMotion();
-
-  if (fresh) cardCache.clear();
-  else {
-    // Keep cards where they are while you're looking at them; re-sort on the next visit.
-    const pos = new Map(order.map((id, i) => [id, i]));
-    books.sort((a, b) => (pos.get(a.id) ?? -1) - (pos.get(b.id) ?? -1));
-  }
-  order = books.map((b) => b.id);
-
-  if (animate && track.children.length) {
-    await Promise.all(
-      $$(".card-in", track).map((el, i) => play(el, [{ transform: "none", opacity: 1 }, { transform: "translateY(30px) scale(0.85)", opacity: 0 }], { duration: 180, delay: i * 20, easing: "ease-in", fill: "forwards" })),
-    );
-    if (shownShelf !== name) return; // switched again mid-animation
-  }
-  const els = books.map((b) => {
-    const key = cardKey(b);
-    const hit = cardCache.get(b.id);
-    if (hit && hit.key === key) {
-      patchCard(hit.el, b);
-      return hit.el;
-    }
-    const el = cardFor(b);
-    cardCache.set(b.id, { key, el });
-    return el;
+function paintTape(x) {
+  track.style.transform = `translate3d(${x.toFixed(1)}px, 0, 0)`;
+  const f = fracAt(x);
+  tapeItems.forEach((t, k) => {
+    const d = Math.min(1, Math.abs(f - k));
+    t.style.opacity = String(1 - d * 0.62);
+    t.style.transform = `scale(${(1 - d * 0.42).toFixed(3)})`;
   });
-  for (const id of cardCache.keys()) if (!order.includes(id)) cardCache.delete(id);
-  track.replaceChildren(...els, addCard());
-  if (fresh) track.scrollLeft = 0;
-  else track.scrollLeft = prevScroll;
-  if (focusId) {
-    const card = track.querySelector(`[data-id="${CSS.escape(focusId)}"]`);
-    if (card) track.scrollLeft = card.offsetLeft - (track.clientWidth - card.offsetWidth) / 2;
-  }
-  centred = -1;
-  paintCarousel();
-  if (animate) {
-    $$(".card-in", track).forEach((el, i) =>
-      el.animate([{ transform: "translateY(60px) scale(0.7) rotate(-4deg)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 760, delay: 60 + i * 70, easing: SPRING, fill: "backwards" }),
-    );
-  }
-  renderUnder();
+  // The stage colour flows between shelves as you drag.
+  const a = Math.floor(f);
+  const b = Math.min(ORDER.length - 1, a + 1);
+  const t = f - a;
+  const ca = SHELF[ORDER[a]].rgb;
+  const cb = SHELF[ORDER[b]].rgb;
+  const mix = ca.map((c, i) => Math.round(c + (cb[i] - c) * t));
+  document.body.style.setProperty("--stage", `rgb(${mix.join(",")})`);
+  document.body.style.setProperty("--stage-ink", SHELF[ORDER[Math.round(f)]].ink);
 }
 
-// Cards curve away from the middle one, like a fanned hand.
-let raf = 0;
-let centred = -1;
-function paintCarousel() {
-  raf = 0;
-  const mid = track.scrollLeft + track.clientWidth / 2;
-  const cards = track.children;
-  let best = 0;
-  let bestD = Infinity;
-  for (let i = 0; i < cards.length; i++) {
-    const c = cards[i];
-    const w = c.offsetWidth || 1;
-    const d = clamp((c.offsetLeft + w / 2 - mid) / (w * 0.9), -2.5, 2.5);
-    const a = Math.abs(d);
-    c.style.transform = `perspective(1100px) translateZ(${(-a * 90).toFixed(1)}px) rotateY(${(-d * 24).toFixed(2)}deg) translateY(${(a * 14).toFixed(1)}px)`;
-    c.style.opacity = String(Math.max(0.25, 1 - a * 0.32));
-    c.style.zIndex = String(100 - Math.round(a * 10));
-    if (a < bestD) {
-      bestD = a;
-      best = i;
-    }
-  }
-  for (let i = 0; i < cards.length; i++) cards[i].classList.toggle("alive", i === best);
-  if (best !== centred) {
-    if (centred !== -1) buzz(4);
-    centred = best;
-    dots(cards.length, best);
-  }
-}
-track.addEventListener("scroll", () => (raf ||= requestAnimationFrame(paintCarousel)), { passive: true });
-addEventListener("resize", () => (raf ||= requestAnimationFrame(paintCarousel)));
-
-function dots(n, on) {
-  const root = $("#dots");
-  if (root.children.length !== n) root.replaceChildren(...Array.from({ length: n }, (_, i) => h("i", { class: i === n - 1 ? "plus" : "" })));
-  [...root.children].forEach((d, i) => d.classList.toggle("on", i === on));
+function placeTape(animate = true, velocity = 0) {
+  measureTape();
+  const k = ORDER.indexOf(shelf);
+  if (animate) tapeX.to(xFor(k), velocity);
+  else tapeX.jump(xFor(k));
+  tapeItems.forEach((t, j) => {
+    t.setAttribute("aria-selected", String(j === k));
+    t.tabIndex = j === k ? 0 : -1;
+  });
 }
 
-track.addEventListener("click", (e) => {
-  const card = e.target.closest(".card");
-  if (!card) return;
-  // A tap on a side card brings it to the middle first.
-  const i = [...track.children].indexOf(card);
-  if (i !== centred && !e.target.closest("[data-act]")) {
-    track.scrollTo({ left: card.offsetLeft - (track.clientWidth - card.offsetWidth) / 2, behavior: prefersReducedMotion() ? "auto" : "smooth" });
-    return;
-  }
-  if (card.dataset.id === "add") return openAdd();
-  const book = state.books.find((b) => b.id === card.dataset.id);
-  if (!book) return;
-  const act = e.target.closest("[data-act]")?.dataset.act;
-  if (act === "plus") {
-    const btn = e.target.closest("[data-act]");
-    bump(btn);
-    commit(S.setPage(state, book.id, book.page + 10), btn);
-    return;
-  }
-  if (act === "start") return commit(S.moveBook(state, book.id, "reading"), e.target);
-  openBook(book.id, card.querySelector(".book"));
-});
-
-function renderUnder() {
-  const root = $("#under");
-  const name = shownShelf;
-  const items = [];
-  if (!state.books.length) {
-    items.push(
-      h("p", { class: "hint", text: "Your shelves are empty. Tap the + card to add a book, or:" }),
-      h("button", { type: "button", class: "btn hot", id: "starter", on: { click: loadStarter } }, "⚡ Load a starter stack"),
-    );
-  } else if (name === "want" && S.shelf(state, "want").length) {
-    items.push(h("button", { type: "button", class: "btn lime wiggle", id: "pick", on: { click: openPick } }, "🎲 Pick my next read"));
-  } else if (name === "reading" && S.shelf(state, "reading").length) {
-    items.push(h("p", { class: "hint", text: "Tap a book to log pages. Poke a cover for a surprise 👀" }));
-  } else if (name === "read" && S.shelf(state, "read").length) {
-    const pages = S.shelf(state, "read").reduce((a, b) => a + b.pages, 0);
-    const n = S.finishedCount(state);
-    items.push(h("p", { class: "hint", text: `${n} ${n === 1 ? "book" : "books"}, ${fmt(pages)} pages conquered 💪` }));
-  } else {
-    items.push(h("p", { class: "hint", text: name === "read" ? "Finish a book and it lands here, with confetti." : name === "want" ? "Books you want to read go here." : "Nothing on the go. Start something from your Want pile." }));
-  }
-  root.replaceChildren(...items);
-}
-
-function loadStarter(e) {
-  let s = state;
-  const ids = [];
-  for (const b of STARTER) {
-    const r = S.addBook(s, b);
-    s = r.state;
-    const book = s.books[s.books.length - 1];
-    // Starter books arrive part-read, without pretending you read those pages today.
-    if (b.page) book.page = book.best = b.page;
-    if (b.rating) book.rating = b.rating;
-    book.touched -= ids.length;
-    ids.push(book.id);
-  }
-  s = { ...s, xp: state.xp + 50 };
-  commit({ state: s, events: [{ type: "xp", amount: 50 }, { type: "starter" }] }, e?.target);
-  burst(track, { count: 80 });
-  renderShelf(tabs.current, { switching: true });
-}
-
-/* ============================================================
-   A book, up close
-   ============================================================ */
-
-const bookSheet = sheet($("#sheet-book"), { onClose: () => renderShelf(tabs.current) });
-let openId = null;
-let pokes = 0;
-
-function openBook(id, fromArt) {
-  openId = id;
-  pokes = 0;
-  drawBook();
-  bookSheet.show();
-  // The cover flies from the card into the sheet.
-  const to = $("#book-body .bk-art .book");
-  if (fromArt && to && !prefersReducedMotion()) {
-    requestAnimationFrame(() => {
-      const a = fromArt.getBoundingClientRect();
-      const b = to.getBoundingClientRect();
-      if (!b.width) return;
-      to.animate(
-        [
-          { transform: `translate(${a.left - b.left}px, ${a.top - b.top}px) scale(${a.width / b.width})`, transformOrigin: "top left" },
-          { transform: "none", transformOrigin: "top left" },
-        ],
-        { duration: 700, easing: SPRING },
-      );
-    });
-  }
-}
-
-function drawBook() {
-  const book = state.books.find((b) => b.id === openId);
-  const body = $("#book-body");
-  if (!book) return body.replaceChildren();
-  const art = bookArt(book, { size: "lg" });
-  art.classList.add("alive");
-  const artWrap = h("button", { type: "button", class: "bk-art", "aria-label": "Poke the cover" }, art);
-  tiltable(artWrap, art);
-  const eggs = state.eggs.filter((t) => t.startsWith(`${book.id}:`)).length;
-  const theme = themedEgg(book);
-  const pokeBtn = h("button", { type: "button", class: "pill poke", "aria-label": "Poke the cover for a surprise" }, `✨ Poke it`, h("small", { text: eggs ? ` · ${eggs} found` : theme ? " · there's a secret" : "" }));
-
-  const doPoke = async () => {
-    const res = await poke(book, art, pokes++);
-    const r = S.findEgg(state, book.id, res.egg);
-    r.events.forEach((e) => e.type === "egg" && (e.label = res.label));
-    if (r.events.find((x) => x.type === "egg")?.fresh) commit(r, artWrap);
-    else floatText(artWrap, res.label, "#ff6bd6");
-    const n = state.eggs.filter((t) => t.startsWith(`${book.id}:`)).length;
-    pokeBtn.querySelector("small").textContent = n ? ` · ${n} found` : "";
-  };
-  artWrap.addEventListener("click", doPoke);
-  pokeBtn.addEventListener("click", doPoke);
-
-  const seg = h(
-    "div",
-    { class: "seg small", role: "radiogroup", "aria-label": "Shelf" },
-    S.SHELVES.map((id) =>
-      h(
-        "button",
-        { type: "button", role: "radio", class: "seg-btn", "aria-checked": String(book.shelf === id), vars: { "--tone": SHELF_META[id].tone }, on: { click: (e) => moveTo(id, e.currentTarget) } },
-        `${SHELF_META[id].emoji} ${SHELF_META[id].label}`,
-      ),
-    ),
-  );
-
-  const parts = [
-    h("div", { class: "bk-hero" }, artWrap, pokeBtn),
-    h("h2", { class: "bk-title", id: "bk-title", text: book.title }),
-    h("p", { class: "bk-by", text: [book.author, book.year].filter(Boolean).join(" · ") || "Unknown author" }),
-    seg,
-  ];
-  parts.push(book.shelf === "read" ? finishedPanel(book) : tracker(book));
-  parts.push(removeButton(book));
-  body.replaceChildren(...parts);
-}
-
-function moveTo(id, el) {
-  const book = state.books.find((b) => b.id === openId);
-  if (!book || book.shelf === id) return;
-  commit(S.moveBook(state, book.id, id), el);
-  drawBook();
-}
-
-/** The page tracker: a big number, a scroll wheel, quick-add buttons and a slider, all in sync. */
-function tracker(book) {
-  let page = book.page;
-  let saveTimer = 0;
-  const big = h("b", { class: "bk-page", text: String(page) });
-  const pct = h("span", { class: "bk-pct" });
-  const left = h("span", { class: "bk-left" });
-  const fill = h("i");
-  const slider = h("input", { type: "range", min: "0", max: String(book.pages), value: String(page), class: "slider", "aria-label": "Page you're on" });
-
-  const show = (v, from) => {
-    page = v;
-    big.textContent = String(v);
-    const p = Math.round((v / book.pages) * 100);
-    pct.textContent = `${p}%`;
-    const rest = book.pages - v;
-    left.textContent = rest ? `${rest} pages to go · about ${eta(rest)}` : "Last page! 🎉";
-    fill.style.setProperty("--p", `${(v / book.pages) * 100}%`);
-    slider.style.setProperty("--p", `${(v / book.pages) * 100}%`);
-    if (from !== "slider") slider.value = String(v);
-    if (from !== "wheel") wheel.set(v, from === "quick");
-    if (from) {
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(save, from === "quick" ? 450 : 650);
-    }
-  };
-  const save = () => {
-    const cur = state.books.find((b) => b.id === book.id);
-    if (!cur || cur.page === page) return;
-    const was = cur.shelf;
-    const r = commit(S.setPage(state, book.id, page), big);
-    if (r.events.some((e) => e.type === "milestone")) bump(big);
-    const now = state.books.find((b) => b.id === book.id);
-    if (now && now.shelf !== was && now.shelf === "read") setTimeout(drawBook, 400);
-    else if (now && now.shelf !== was) drawBook();
-  };
-
-  const wheel = createWheel({ max: book.pages, value: page, label: `Page, of ${book.pages}`, onInput: (v) => show(v, "wheel") });
-  slider.addEventListener("input", () => show(Number(slider.value), "slider"));
-  const quick = h(
-    "div",
-    { class: "quick" },
-    [1, 5, 10, 25].map((n) =>
-      h("button", { type: "button", class: "pill q", "aria-label": `Add ${n} pages`, on: { click: (e) => (bump(e.currentTarget), show(Math.min(book.pages, page + n), "quick")) } }, `+${n}`),
-    ),
-    h("button", { type: "button", class: "pill q done", "aria-label": "Finished it", on: { click: () => show(book.pages, "quick") } }, "🏁 Finished it"),
-  );
-
-  const panel = h(
-    "div",
-    { class: "tracker" },
-    h("div", { class: "bk-now" }, h("span", { class: "bk-on", text: "I'm on page" }), big, h("span", { class: "bk-of", text: `of ${book.pages}` }), pct),
-    h("div", { class: "bk-bar" }, fill),
-    h("div", { class: "bk-pick" }, wheel.el, quick),
-    slider,
-    left,
-  );
-  show(page);
-  return panel;
-}
-
-const eta = (pages) => {
-  const min = pages * 1.6;
-  if (min < 60) return `${Math.max(1, Math.round(min))} min`;
-  const hrs = min / 60;
-  return hrs < 10 ? `${hrs.toFixed(1).replace(/\.0$/, "")} h` : `${Math.round(hrs)} h`;
-};
-
-function finishedPanel(book) {
-  const stars = h(
-    "div",
-    { class: "stars big", role: "radiogroup", "aria-label": "Your rating" },
-    [1, 2, 3, 4, 5].map((n) =>
-      h("button", {
-        type: "button",
-        role: "radio",
-        class: n <= book.rating ? "on" : "",
-        "aria-checked": String(n === book.rating),
-        "aria-label": `${n} star${n > 1 ? "s" : ""}`,
-        text: "★",
-        on: {
-          click: (e) => {
-            commit(S.rateBook(state, book.id, n), e.currentTarget);
-            [...stars.children].forEach((s, i) => {
-              s.classList.toggle("on", i < n);
-              s.setAttribute("aria-checked", String(i + 1 === n));
-              if (i < n) play(s, [{ transform: "scale(1)" }, { transform: "scale(1.6) rotate(20deg)" }, { transform: "none" }], { duration: 480, delay: i * 60, easing: SPRING });
-            });
-            if (n === 5) burst(e.currentTarget, { count: 50, kinds: ["star"], colors: ["#ffd23d", "#ffb81f", "#fff3b0"] });
-          },
-        },
-      }),
-    ),
-  );
-  const when = book.finished ? new Date(book.finished).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) : "";
-  return h(
-    "div",
-    { class: "finished" },
-    h("p", { class: "fin-line" }, "🏆 Finished", when ? ` on ${when}` : "", ` · ${book.pages} pages`),
-    h("p", { class: "fin-ask", text: book.rating ? "Your rating" : "How was it?" }),
-    stars,
-    h("button", { type: "button", class: "btn ghost", on: { click: (e) => moveTo("reading", e.currentTarget) } }, "🔁 Read it again"),
-  );
-}
-
-function removeButton(book) {
-  let armed = false;
-  const btn = h("button", { type: "button", class: "btn danger" }, "Remove from shelves");
-  btn.addEventListener("click", () => {
-    if (!armed) {
-      armed = true;
-      btn.textContent = "Tap again to remove";
-      btn.classList.add("armed");
-      setTimeout(() => {
-        armed = false;
-        btn.textContent = "Remove from shelves";
-        btn.classList.remove("armed");
-      }, 3000);
+{
+  const vel = new Velocity();
+  let d = null;
+  tape.addEventListener("pointerdown", (e) => {
+    if (e.button > 0) return;
+    e.preventDefault();
+    d = { id: e.pointerId, x0: e.clientX, start: tapeX.value, moved: false };
+    vel.reset(e.clientX, 0);
+  });
+  tape.addEventListener("pointermove", (e) => {
+    if (!d || e.pointerId !== d.id) return;
+    const dx = e.clientX - d.x0;
+    if (!d.moved && Math.abs(dx) < 6) return;
+    if (!d.moved) tape.setPointerCapture(e.pointerId);
+    d.moved = true;
+    vel.add(e.clientX, 0);
+    let x = d.start + dx;
+    const lo = xFor(ORDER.length - 1);
+    const hi = xFor(0);
+    if (x > hi) x = hi + rubber(x - hi, 80);
+    if (x < lo) x = lo + rubber(x - lo, 80);
+    tapeX.jump(x);
+  });
+  const up = (e) => {
+    if (!d || e.pointerId !== d.id) return;
+    const moved = d.moved;
+    d = null;
+    if (!moved) {
+      const item = e.target.closest(".tape-item");
+      if (item) switchShelf(item.dataset.shelf);
       return;
     }
-    commit(S.removeBook(state, book.id));
-    bookSheet.close();
+    const v = vel.get().x;
+    const k = clamp(Math.round(fracAt(tapeX.value + project(v, 0.994))), 0, ORDER.length - 1);
+    hints.learn("tape");
+    if (ORDER[k] !== shelf) switchShelf(ORDER[k], { velocity: v });
+    else placeTape(true, v);
+  };
+  tape.addEventListener("pointerup", up);
+  tape.addEventListener("pointercancel", up);
+  track.addEventListener("keydown", (e) => {
+    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const k = clamp(ORDER.indexOf(shelf) + step, 0, ORDER.length - 1);
+    switchShelf(ORDER[k]);
+    tapeItems[k].focus();
   });
-  return btn;
+}
+addEventListener("resize", () => placeTape(false));
+// Focus can scroll an overflow:hidden box; the tape positions itself, so keep it pinned.
+tape.addEventListener("scroll", () => (tape.scrollLeft = 0));
+
+let shelf = ORDER.find((s) => S.shelf(state, s).length) || "reading";
+
+function switchShelf(id, { velocity = 0 } = {}) {
+  if (id === shelf) return placeTape(true, velocity);
+  const dir = ORDER.indexOf(id) > ORDER.indexOf(shelf) ? 1 : -1;
+  shelf = id;
+  document.body.dataset.shelf = id;
+  $("#stage-word").textContent = Array(6).fill(SHELF[id].label).join(" ");
+  placeTape(true, velocity);
+  buzz(8);
+  renderShelf({ deal: dir });
 }
 
 /* ============================================================
-   Adding books
+   The pile
    ============================================================ */
 
-let addTo = "want";
-let lastAdded = null;
-const addSheet = sheet($("#sheet-add"), {
-  onClose: () => {
-    if (lastAdded) {
-      const target = state.books.find((b) => b.id === lastAdded)?.shelf;
-      lastAdded = null;
-      if (target && target !== tabs.current) tabs.select(target);
-      else renderShelf(tabs.current, { switching: true });
-    }
+const deckEl = $("#deck");
+const cache = new Map(); // id -> { key, el }
+const keyOf = (b) => JSON.stringify([b.title, b.author, b.cover, b.img, b.pages, b.shelf, b.rating, b.finished]);
+let addEl = addStamp();
+
+function stampFor(b) {
+  const k = keyOf(b);
+  const hit = cache.get(b.id);
+  if (hit && hit.key === k) {
+    patchStamp(hit.el, b);
+    return hit.el;
+  }
+  const el = bookStamp(b, { tone: SHELF[b.shelf].tone });
+  cache.set(b.id, { key: k, el });
+  return el;
+}
+
+function patchStamp(el, b) {
+  if (b.shelf !== "reading") return;
+  const pct = Math.round((b.page / b.pages) * 100);
+  const d = el.querySelector(".denom b");
+  if (d && d.textContent !== String(pct)) d.textContent = String(pct);
+  el.setAttribute("aria-label", `${b.title}${b.author ? ` by ${b.author}` : ""}, page ${b.page} of ${b.pages}`);
+}
+
+function renderShelf({ deal = 0 } = {}) {
+  const books = S.shelf(state, shelf);
+  if (deal) {
+    cache.clear();
+    addEl = addStamp();
+  }
+  const items = books.map((b) => ({ id: b.id, el: stampFor(b) }));
+  items.push({ id: "add", el: addEl });
+  deck.set(items, { deal });
+  renderHud();
+}
+
+const deck = createDeck(deckEl, {
+  canScrub: (id) => shelf === "reading" && !!book(id),
+  canLift: (id) => !!book(id),
+  onIndex: (id) => onTop(id),
+  onScrubStart: (id) => startScrub(id),
+  onScrub: (id, dy, vy) => scrub(id, dy, vy),
+  onScrubEnd: (id, vy) => endScrub(id, vy),
+  onScrubKey: (id, n) => nudge(id, n),
+  onPull: (p) => deckEl.style.setProperty("--pull", String(p)),
+  onPullUp: () => {
+    hints.learn("pull");
+    openAdd();
+  },
+  onTap: (id, el) => (id === "add" ? openAdd() : flip(el)),
+  onDoubleTap: (id, el) => pokeBook(id, el),
+  onLift: (id, on) => {
+    if (on) hints.learn("hold");
+    showZones(on);
+  },
+  zones: () => [...document.querySelectorAll(".zone.on")].map((el) => ({ id: el.dataset.zone, el })),
+  onHover: (zid) => document.querySelectorAll(".zone").forEach((z) => z.classList.toggle("hot", z.dataset.zone === zid)),
+  onDrop: (id, zid) => dropTo(id, zid),
+  onDrag: (f) => {
+    deckEl.style.setProperty("--drag", f.toFixed(3));
+    liquid?.slosh(f * 0.15);
+  },
+  onFlick: (vx) => {
+    hints.learn("swipe");
+    setTimeout(() => liquid?.slosh(clamp(vx / 2500, -1, 1)), 30);
+  },
+  onEdge: (which) => {
+    if (which === "end") island.say({ icon: "📮", title: "LAST ONE: THE + STAMP", sub: "Tap it or pull it up to add a book", tone: "pink", buzz: false });
   },
 });
 
-function openAdd() {
-  addTo = tabs.current || "want";
-  drawAddShelf();
-  addSheet.show();
-  const q = $("#q");
-  q.value = "";
-  $("#results").replaceChildren(suggestions());
-  setTimeout(() => q.focus({ preventScroll: true }), 300);
+function flip(el) {
+  el.classList.toggle("flipped");
+  buzz(6);
 }
 
-function drawAddShelf() {
-  $("#add-shelf").replaceChildren(
-    ...S.SHELVES.map((id) =>
-      h(
-        "button",
-        {
-          type: "button",
-          role: "radio",
-          class: "seg-btn",
-          "aria-checked": String(addTo === id),
-          vars: { "--tone": SHELF_META[id].tone },
-          on: {
-            click: () => {
-              addTo = id;
-              drawAddShelf();
-            },
-          },
-        },
-        `${SHELF_META[id].emoji} ${SHELF_META[id].label}`,
-      ),
-    ),
-  );
-}
+let topId = null;
+let liquid = null;
+let liquidEl = null;
 
-function suggestions() {
-  const picks = ["Fourth Wing", "Project Hail Mary", "The Hobbit", "Atomic Habits", "Normal People", "Dune"];
-  return h(
-    "div",
-    { class: "suggest" },
-    h("p", { class: "hint", text: "Try one of these" }),
-    h("div", { class: "chips-row" }, picks.map((p) => h("button", { type: "button", class: "pill", text: p, on: { click: () => ((($("#q").value = p)), runSearch()) } }))),
-  );
-}
-
-let searchTimer = 0;
-$("#q").addEventListener("input", () => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(runSearch, 320);
-});
-$("#q").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    clearTimeout(searchTimer);
-    runSearch();
+function onTop(id) {
+  if (topId !== id) deckEl.querySelectorAll(".stamp.flipped").forEach((s) => s.classList.remove("flipped"));
+  topId = id;
+  const b = book(id);
+  const canvas = deck.top?.el.querySelector("canvas.liquid");
+  if (canvas !== liquidEl) {
+    liquid?.destroy();
+    liquid = null;
+    liquidEl = null;
+    if (b && b.shelf === "reading" && canvas) {
+      liquidEl = canvas;
+      liquid = createLiquid(canvas, { color: liquidOf(b.seed) });
+      liquid.level(b.page / b.pages, true);
+      liquid.splash(0.6);
+      showPageLabel(b.page, b);
+    }
   }
-});
+  const n = S.shelf(state, shelf).length;
+  const idx = deck.index;
+  $("#counter").textContent = id === "add" ? (n ? `${n} ${n === 1 ? "BOOK" : "BOOKS"} · ADD` : "EMPTY · ADD ONE") : `${String(idx + 1).padStart(2, "0")} / ${String(n).padStart(2, "0")}`;
+  deckEl.setAttribute("aria-label", b ? `${b.title}. ${idx + 1} of ${n} on ${SHELF[shelf].label}. Arrow keys flip, Enter turns the stamp over.` : "Add a book. Press Enter.");
+  renderDock();
+  offerHints();
+}
 
-async function runSearch() {
-  const q = $("#q").value.trim();
-  const out = $("#results");
-  if (q.length < 2) return out.replaceChildren(suggestions());
-  out.replaceChildren(h("div", { class: "loading" }, h("i"), h("i"), h("i")));
-  try {
-    const found = await searchBooks(q);
-    if ($("#q").value.trim() !== q) return;
-    if (!found.length) return out.replaceChildren(h("p", { class: "hint", text: `Nothing for "${q}". Try fewer words, or add it yourself below.` }));
-    out.replaceChildren(...found.map(resultRow));
-    $$(".result", out).forEach((el, i) => el.animate([{ opacity: 0, transform: "translateY(16px) scale(0.96)" }, { opacity: 1, transform: "none" }], { duration: 420, delay: i * 35, easing: SPRING, fill: "backwards" }));
-  } catch (err) {
-    if (err?.name === "AbortError" && $("#q").value.trim() !== q) return;
-    out.replaceChildren(h("p", { class: "hint warn", text: navigator.onLine === false ? "You're offline. You can still add a book by hand below." : "Search is having a moment. Try again, or add it by hand below." }));
+function offerHints() {
+  const b = book(topId);
+  if (!b) hints.offer(state.books.length ? ["pull", "swipe", "tape", "stats"] : ["pull"]);
+  else if (b.shelf === "reading") hints.offer(["scrub", "swipe", "poke", "hold", "tape", "stats"]);
+  else hints.offer(["swipe", "hold", "poke", "tape", "stats"]);
+}
+
+/* ---------------- reading: scrub, dial, keys ---------------- */
+
+let live = null; // { id, page, carry }
+let saveTimer = 0;
+let coast = 0;
+
+function startScrub(id) {
+  cancelAnimationFrame(coast);
+  const b = book(id);
+  live = { id, page: live?.id === id ? live.page : b.page, carry: 0 };
+  deck.top?.el.classList.add("scrubbing");
+}
+
+function pxPerPage(b) {
+  return clamp(300 / Math.min(b.pages, 50), 4, 30);
+}
+
+function scrub(id, dy, vy) {
+  const b = book(id);
+  if (!b || !live) return;
+  const accel = 1 + Math.min(5, Math.abs(vy) / 700);
+  live.carry += (dy / pxPerPage(b)) * accel;
+  const whole = Math.trunc(live.carry);
+  if (whole) {
+    live.carry -= whole;
+    setLive(b, live.page + whole);
+    if (Math.abs(vy) > 1400) liquid?.splash(clamp(-vy / 6000, -0.6, 0.6), Math.random());
   }
 }
 
-function resultRow(r) {
-  const seed = S.hash(`${r.title}|${r.author}`);
-  const have = state.books.find((b) => (r.key && b.key === r.key) || (b.title === r.title && b.author === r.author));
-  const btn = h("button", { type: "button", class: `add-one${have ? " added" : ""}`, "aria-label": have ? `${r.title} is already on your shelves` : `Add ${r.title}`, text: have ? "✓" : "+" });
-  const row = h(
-    "div",
-    { class: "result" },
-    bookArt({ ...r, seed }, { size: "sm" }),
-    h("span", { class: "r-text" }, h("b", { text: r.title }), h("small", { text: [r.author, r.year, r.pages ? `${r.pages} pages` : null].filter(Boolean).join(" · ") })),
-    btn,
-  );
-  row.addEventListener("click", () => {
-    if (btn.classList.contains("added")) return;
-    const res = commit(S.addBook(state, { ...r, pages: r.pages || 300, shelf: addTo, seed }), btn);
-    lastAdded = res.events.find((e) => e.type === "added")?.book.id;
-    btn.textContent = "✓";
-    btn.classList.add("added");
-    btn.setAttribute("aria-label", `${r.title} added`);
-    burst(btn, { count: 36, power: 0.7 });
-    play(row.querySelector(".book"), [{ transform: "none" }, { transform: "translateY(-14px) rotate(-8deg) scale(1.1)" }, { transform: "none" }], { duration: 600, easing: SPRING });
-  });
-  return row;
+function endScrub(id, vy) {
+  const b = book(id);
+  deck.top?.el.classList.remove("scrubbing");
+  if (!b || !live) return;
+  hints.learn("scrub");
+  // A flick keeps turning pages for a moment.
+  let v = vy;
+  const step = () => {
+    v *= 0.92;
+    scrub(id, v / 60, v);
+    if (Math.abs(v) > 120 && !prefersReducedMotion()) coast = requestAnimationFrame(step);
+    else saveSoon(220);
+  };
+  if (Math.abs(v) > 300) coast = requestAnimationFrame(step);
+  else saveSoon(220);
 }
 
-$("#m-add").addEventListener("click", (e) => {
-  const title = $("#m-title").value.trim();
-  if (!title) {
-    $("#m-title").focus();
-    play($("#m-title"), [{ transform: "translateX(0)" }, { transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "translateX(-4px)" }, { transform: "none" }], { duration: 360 });
-    return;
+function nudge(id, n) {
+  const b = book(id);
+  if (!b) return;
+  live = { id, page: live?.id === id ? live.page : b.page, carry: 0 };
+  setLive(b, live.page + n);
+  liquid?.splash(n > 0 ? 0.5 : -0.3, Math.random());
+  saveSoon(600);
+}
+
+function setLive(b, page) {
+  const p = clamp(page, 0, b.pages);
+  if (!live || live.id !== b.id) live = { id: b.id, page: b.page, carry: 0 };
+  if (p === live.page) return;
+  if (p === b.pages || p === 0) buzz(15);
+  else buzz(3);
+  live.page = p;
+  clearTimeout(saveTimer);
+  liquid?.level(p / b.pages);
+  showPageLabel(p, b);
+  const el = deck.top?.el;
+  const d = el?.querySelector(".denom b");
+  if (d) d.textContent = String(Math.round((p / b.pages) * 100));
+  updateScreen(b, p);
+}
+
+function showPageLabel(p, b) {
+  const lbl = deck.top?.el.querySelector(".pg");
+  if (!lbl) return;
+  lbl.textContent = `P.${p}`;
+  lbl.style.setProperty("--lvl", String(p / b.pages));
+}
+
+function saveSoon(ms) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    if (!live) return;
+    const b = book(live.id);
+    const page = live.page;
+    live = null;
+    if (!b || b.page === page) return;
+    const anchor = deck.top?.el.querySelector(".denom") || deckEl;
+    const r = commit(S.setPage(state, b.id, page), anchor);
+    if (r.events.some((e) => e.type === "finished" || e.type === "moved")) setTimeout(() => renderShelf(), 500);
+    else {
+      patchStamp(deck.top.el, book(b.id));
+      renderDock();
+    }
+  }, ms);
+}
+
+/* ---------------- drop zones ---------------- */
+
+function showZones(on) {
+  document.body.classList.toggle("lifting", on);
+  document.querySelectorAll(".zone").forEach((z) => z.classList.toggle("on", on && z.dataset.zone !== shelf));
+}
+
+function dropTo(id, zone) {
+  const b = book(id);
+  if (!b) return;
+  if (zone === "bin") {
+    const before = state;
+    commit(S.removeBook(state, id));
+    cache.delete(id);
+    island.say({ icon: "🗑️", title: "REMOVED", sub: `${b.title} · tap to undo`, tone: "pink", action: () => undo(before) });
+  } else {
+    commit(S.moveBook(state, id, zone), $(`.zone[data-zone="${zone}"]`));
   }
-  const res = commit(S.addBook(state, { title, author: $("#m-author").value, pages: $("#m-pages").value, shelf: addTo }), e.currentTarget);
-  lastAdded = res.events.find((x) => x.type === "added")?.book.id;
-  burst(e.currentTarget, { count: 60 });
-  $("#m-title").value = "";
-  $("#m-author").value = "";
-  addSheet.close();
-});
+  setTimeout(() => renderShelf(), 260);
+}
+
+function undo(before) {
+  state = before;
+  S.save(globalThis.localStorage, state);
+  renderShelf();
+  island.say({ icon: "↩️", title: "BACK ON THE SHELF", tone: "lime", buzz: false });
+}
+
+/* ---------------- easter eggs ---------------- */
+
+const pokes = new Map();
+async function pokeBook(id, el) {
+  const b = book(id);
+  if (!b) return;
+  hints.learn("poke");
+  el.classList.remove("flipped");
+  const n = pokes.get(id) || 0;
+  pokes.set(id, n + 1);
+  const res = await poke(b, el, n);
+  const r = S.findEgg(state, id, res.egg);
+  r.events.forEach((e) => e.type === "egg" && (e.label = res.label));
+  if (r.events.find((x) => x.type === "egg")?.fresh) commit(r, el.querySelector(".win"));
+  else floatText(el.querySelector(".win"), res.label, "#ff6ad5");
+}
 
 /* ============================================================
-   Pick my next read
+   The dock
    ============================================================ */
 
-const pickSheet = sheet($("#sheet-pick"), { onClose: () => renderShelf(tabs.current) });
-function openPick() {
-  const pile = S.shelf(state, "want");
-  createDeck($("#deck"), {
-    cards: pile,
-    render: (book) =>
+const dock = $("#dock");
+
+/** A chunky keycap. */
+function key(label, cls, onPress, { aria, sub } = {}) {
+  const b = h("button", { type: "button", class: `key ${cls}`, "aria-label": aria || null }, h("span", { class: "cap" }, h("b", { text: label }), sub ? h("small", { text: sub }) : null));
+  b.addEventListener("click", (e) => {
+    buzz(8);
+    onPress(e);
+  });
+  return b;
+}
+
+/** The little LCD: lines of pixel text that type themselves out. */
+function screen(lines) {
+  const el = h("div", { class: "screen", role: "status" }, lines.map((l) => h("span", { class: "ln", text: "" })));
+  [...el.children].forEach((ln, k) => typeTo(ln, lines[k]));
+  return el;
+}
+
+function typeTo(el, text) {
+  if (el.dataset.text === text) return;
+  el.dataset.text = text;
+  clearInterval(Number(el.dataset.timer || 0));
+  if (prefersReducedMotion() || text.length > 48) return (el.textContent = text);
+  let n = 0;
+  const t = setInterval(() => {
+    n += 2;
+    el.textContent = text.slice(0, n) + (n < text.length ? "▌" : "");
+    if (n >= text.length) clearInterval(t);
+  }, 16);
+  el.dataset.timer = String(t);
+}
+
+const bar = (frac, cells = 14) => "▓".repeat(Math.round(frac * cells)).padEnd(cells, "░");
+const hoursLeft = (pages) => {
+  const m = pages * 1.6;
+  return m < 60 ? `${Math.max(1, Math.round(m))} MIN` : `${(m / 60).toFixed(1).replace(/\.0$/, "")} H`;
+};
+
+let screenEl = null;
+let knob = null;
+
+function readingLines(b, p) {
+  return [`PG ${String(p).padStart(4, "0")} / ${String(b.pages).padStart(4, "0")}`, `${bar(p / b.pages)} ${Math.round((p / b.pages) * 100)}%`, p >= b.pages ? "LAST PAGE!" : `${hoursLeft(b.pages - p)} LEFT · TODAY ${S.pagesOn(state)}/${state.goal}`];
+}
+
+function updateScreen(b, p) {
+  if (!screenEl || dock.dataset.mode !== "reading") return;
+  readingLines(b, p).forEach((t, k) => {
+    const ln = screenEl.children[k];
+    ln.dataset.text = t;
+    ln.textContent = t;
+  });
+  knob?.value(`Page ${p} of ${b.pages}`);
+}
+
+function renderDock() {
+  const b = book(topId);
+  const mode = !b ? (state.books.length ? "add" : "empty") : b.shelf;
+  const sameBook = dock.dataset.mode === mode && dock.dataset.id === (b?.id || "") && mode !== "read";
+  dock.dataset.mode = mode;
+  dock.dataset.id = b?.id || "";
+  if (sameBook && mode === "reading") return updateScreen(b, live?.id === b.id ? live.page : b.page);
+  knob = null;
+  let body;
+  if (mode === "reading") {
+    screenEl = screen(readingLines(b, b.page));
+    knob = createKnob({
+      label: `Page dial for ${b.title}`,
+      onTurn: (n) => {
+        const cur = book(topId);
+        if (!cur) return;
+        if (!live || live.id !== cur.id) live = { id: cur.id, page: cur.page, carry: 0 };
+        setLive(cur, live.page + n);
+        liquid?.splash(n > 0 ? 0.25 : -0.15, 0.85);
+      },
+      onRelease: () => saveSoon(500),
+    });
+    knob.value(`Page ${b.page} of ${b.pages}`);
+    const plus = (n, cls) => key(`+${n}`, cls, (e) => nudgeKey(n, e), { aria: `Add ${n} pages` });
+    body = [
+      h("div", { class: "pad reading" }, screenEl, h("div", { class: "knob-well" }, knob.el, h("small", { text: "SPIN" })), h("div", { class: "keys" }, plus(1, "k-cream"), plus(5, "k-blue"), plus(10, "k-yellow"), plus(25, "k-red"))),
+    ];
+  } else if (mode === "want") {
+    screenEl = screen([`NEXT UP?`, b.title.toUpperCase().slice(0, 28), `${b.pages} PAGES · ~${hoursLeft(b.pages)}`]);
+    body = [
       h(
         "div",
-        { class: "deck-in" },
-        bookArt(book, { size: "lg" }),
-        h("div", { class: "deck-meta" }, h("b", { text: book.title }), h("small", { text: [book.author, `${book.pages} pages`].filter(Boolean).join(" · ") })),
+        { class: "pad want" },
+        screenEl,
+        h(
+          "div",
+          { class: "keys two" },
+          key("START", "k-blue wide", (e) => start(b.id, e.currentTarget), { sub: "READING ▶" }),
+          key("🎲", "k-yellow", () => shuffle(), { aria: "Shuffle the pile", sub: "SHUFFLE" }),
+        ),
       ),
-    onRight: (book) => {
-      commit(S.moveBook(state, book.id, "reading"), $("#deck"));
-      burst($("#deck"), { count: 70, emoji: ["📖", "💖"] });
-      setTimeout(() => {
-        pickSheet.close();
-        tabs.select("reading");
-      }, 700);
-    },
-    onLeft: () => {},
-  });
-  pickSheet.show();
-  setTimeout(() => $("#deck").focus({ preventScroll: true }), 200);
+    ];
+  } else if (mode === "read") {
+    const when = b.finished ? new Date(b.finished).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }).toUpperCase() : "";
+    screenEl = screen([`FINISHED ${when}`, `${b.pages} PAGES`, "HOW DID IT FEEL?"]);
+    body = [
+      h(
+        "div",
+        { class: "pad read" },
+        screenEl,
+        h(
+          "div",
+          { class: "keys feel", role: "radiogroup", "aria-label": "How did it feel?" },
+          [1, 2, 3, 4, 5].map((n) => {
+            const k = key(feelOf(n), `k-glass${b.rating === n ? " on" : ""}`, (e) => rate(b.id, n, e.currentTarget), { aria: ["", "Meh", "Okay", "Good", "Loved it", "Mind blown"][n] });
+            k.setAttribute("role", "radio");
+            k.setAttribute("aria-checked", String(b.rating === n));
+            return k;
+          }),
+        ),
+        h("div", { class: "keys two" }, key("↺", "k-cream", (e) => start(b.id, e.currentTarget), { sub: "READ AGAIN" })),
+      ),
+    ];
+  } else {
+    screenEl = screen(mode === "empty" ? ["SHELVES EMPTY", "ADD A BOOK, OR", "LOAD A STARTER STACK"] : ["ADD A BOOK", "PULL THE + STAMP UP", "OR PRESS SEARCH"]);
+    body = [
+      h(
+        "div",
+        { class: "pad add" },
+        screenEl,
+        h(
+          "div",
+          { class: "keys two" },
+          key("SEARCH", "k-blue wide", () => openAdd(), { sub: "FIND A BOOK" }),
+          mode === "empty" ? key("⚡", "k-yellow", (e) => loadStarter(e.currentTarget), { aria: "Load a starter stack", sub: "STARTER" }) : key("📊", "k-cream", () => stats.open(), { aria: "Stats", sub: "STATS" }),
+        ),
+      ),
+    ];
+  }
+  dock.replaceChildren(...body);
+  if (!prefersReducedMotion()) dock.firstElementChild.animate([{ transform: "translateY(18px)", opacity: 0.4 }, { transform: "none", opacity: 1 }], { duration: 420, easing: "cubic-bezier(.2,1.4,.4,1)" });
+}
+
+function nudgeKey(n, e) {
+  const cur = book(topId);
+  if (!cur) return;
+  if (!live || live.id !== cur.id) live = { id: cur.id, page: cur.page, carry: 0 };
+  setLive(cur, live.page + n);
+  liquid?.splash(0.35 + n / 40, Math.random());
+  floatText(e.currentTarget, `+${n}`, "#e7ff3d");
+  saveSoon(500);
+}
+
+function start(id, el) {
+  commit(S.moveBook(state, id, "reading"), el);
+  burst(el, { count: 50 });
+  setTimeout(() => switchShelf("reading"), 450);
+}
+
+function rate(id, n, el) {
+  commit(S.rateBook(state, id, n), el);
+  burst(el, { count: 20 + n * 10, emoji: [feelOf(n)] });
+  setTimeout(() => renderShelf(), 250);
+}
+
+function shuffle() {
+  const pile = S.shelf(state, "want");
+  if (pile.length < 2) return;
+  const pick = pile[Math.floor(Math.random() * pile.length)];
+  // Riffle: flick through quickly, landing on a random book.
+  let k = 0;
+  const target = S.shelf(state, "want").findIndex((b) => b.id === pick.id);
+  deck.go(0);
+  const step = () => {
+    if (k >= target) return;
+    k++;
+    deck.go(k, { x: -900 });
+    setTimeout(step, 110);
+  };
+  setTimeout(step, 150);
+  burst(deckEl, { count: 30, emoji: ["🎲"] });
 }
 
 /* ============================================================
-   You: level, badges, goal
+   Stats (pull up)
    ============================================================ */
 
-const meSheet = sheet($("#sheet-me"));
-function openMe() {
-  drawMe();
-  meSheet.show();
-}
+const stats = createPanel($("#panel-stats"), {
+  handles: [$("#pullbar")],
+  onOpen: () => {
+    hints.learn("stats");
+    renderStats();
+  },
+  onProgress: (p) => document.body.style.setProperty("--panel", p.toFixed(3)),
+});
+$("#pullbar").addEventListener("click", () => stats.open());
+// One tap opens your stats; keep tapping and something else happens.
+let lcdTimer = 0;
+$("#lcd").addEventListener("click", () => {
+  clearTimeout(lcdTimer);
+  if (lcdTaps()) return;
+  lcdTimer = setTimeout(() => stats.open(), 320);
+});
+$("#panel-stats [data-close]").addEventListener("click", () => stats.close());
 
-function drawMe() {
+function renderStats() {
   const lp = S.levelProgress(state.xp);
-  const goalVal = h("b", { class: "goal-val", text: String(state.goal) });
-  const setG = (g, el) => {
-    commit(S.setGoal(state, g));
-    goalVal.textContent = String(state.goal);
-    if (el) bump(el);
-  };
-  $("#me-body").replaceChildren(
+  const today = S.pagesOn(state);
+  const wk = S.week(state);
+  const top = Math.max(state.goal, ...wk.map((d) => d.pages));
+  const names = ["S", "M", "T", "W", "T", "F", "S"];
+  const tile = (cls, ...kids) => h("div", { class: `tile ${cls}` }, ...kids);
+  const dial = goalDial(today);
+  $("#stats-body").replaceChildren(
     h(
       "div",
-      { class: "me-hero" },
-      h("span", { class: "me-lvl" }, h("small", { text: "LEVEL" }), h("b", { text: String(lp.level) })),
-      h("div", {}, h("h2", { class: "sheet-title", id: "me-title", text: lp.title }), h("p", { class: "hint", text: `${fmt(state.xp)} XP · ${fmt(lp.need - lp.into)} XP to level ${lp.level + 1}` }), h("div", { class: "xp-bar big" }, h("i", { vars: { width: `${(lp.frac * 100).toFixed(1)}%` } }))),
+      { class: "bento" },
+      tile("t-level span2", h("small", { text: "LEVEL" }), h("b", { class: "huge", text: String(lp.level).padStart(2, "0") }), h("span", { class: "t-title", text: lp.title.toUpperCase() }), h("span", { class: "t-bar" }, h("i", { vars: { width: `${(lp.frac * 100).toFixed(1)}%` } })), h("small", { class: "t-foot", text: `${fmt(lp.into)} / ${fmt(lp.need)} XP TO LV${lp.level + 1}` })),
+      tile("t-streak", h("small", { text: "STREAK" }), h("b", { class: "big", text: String(S.streak(state)).padStart(2, "0") }), h("span", { class: "t-foot", text: "🔥 DAYS IN A ROW" })),
+      dial,
+      tile(
+        "t-week span2",
+        h("small", { text: `THIS WEEK · ${fmt(wk.reduce((a, d) => a + d.pages, 0))} PAGES` }),
+        h(
+          "div",
+          { class: "wbars" },
+          wk.map((d, i) => h("span", { class: `wb${d.pages >= state.goal ? " hit" : ""}${i === 6 ? " today" : ""}`, vars: { "--h": `${Math.max(4, (d.pages / top) * 100)}%` } }, h("i"), h("small", { text: names[new Date(`${d.day}T12:00`).getDay()] }))),
+        ),
+      ),
+      tile("t-books", h("small", { text: "BOOKS READ" }), h("b", { class: "big", text: String(S.finishedCount(state)).padStart(2, "0") })),
+      tile("t-pages", h("small", { text: "PAGES READ" }), h("b", { class: "big", text: fmt(S.totalPages(state)) })),
+      tile("t-eggs", h("small", { text: "EASTER EGGS" }), h("b", { class: "big", text: `🥚${state.eggs.length}` })),
+      tile("t-xp", h("small", { text: "TOTAL XP" }), h("b", { class: "big", text: fmt(state.xp) })),
     ),
+    h("h3", { class: "p-h", text: `BADGES ${Object.keys(state.badges).length}/${S.BADGES.length}` }),
     h(
       "div",
-      { class: "me-stats" },
-      [
-        ["🔥", S.streak(state), "day streak"],
-        ["📚", S.finishedCount(state), "finished"],
-        ["📄", fmt(S.totalPages(state)), "pages"],
-        ["🥚", state.eggs.length, "eggs"],
-      ].map(([e, n, l]) => h("span", { class: "me-stat" }, h("i", { text: e }), h("b", { text: String(n) }), h("small", { text: l }))),
-    ),
-    h(
-      "div",
-      { class: "goal-set" },
-      h("span", { class: "label", text: "Daily goal" }),
-      h("button", { type: "button", class: "pill round", "aria-label": "Lower goal", on: { click: (e) => setG(state.goal - 5, e.currentTarget) } }, "−"),
-      goalVal,
-      h("span", { class: "unit", text: "pages" }),
-      h("button", { type: "button", class: "pill round", "aria-label": "Raise goal", on: { click: (e) => setG(state.goal + 5, e.currentTarget) } }, "+"),
-    ),
-    h("h3", { class: "me-h", text: `Badges · ${Object.keys(state.badges).length}/${S.BADGES.length}` }),
-    h(
-      "div",
-      { class: "badge-grid" },
+      { class: "badges" },
       S.BADGES.map((b) => {
         const got = state.badges[b.id];
-        return h("span", { class: `badge ${got ? "got" : "locked"}` }, h("span", { class: "be", text: got ? b.emoji : "?" }), h("b", { text: b.name }), h("small", { text: b.text }));
+        return h("div", { class: `mini${got ? " got" : ""}`, title: b.text }, h("div", { class: "mini-paper" }, h("span", { class: "mini-e", text: got ? b.emoji : "?" }), h("b", { text: b.name.toUpperCase() }), h("small", { text: b.text })));
       }),
     ),
     h(
       "div",
-      { class: "me-actions" },
-      h("button", { type: "button", class: "btn ghost", on: { click: exportData } }, "⬇️ Back up"),
-      h("label", { class: "btn ghost" }, "⬆️ Restore", h("input", { type: "file", accept: "application/json,.json", hidden: true, on: { change: importData } })),
+      { class: "keys two p-actions" },
+      key("⬇", "k-cream", exportData, { sub: "BACK UP" }),
+      (() => {
+        const k = key("⬆", "k-cream", () => k.querySelector("input").click(), { sub: "RESTORE" });
+        k.append(h("input", { type: "file", accept: "application/json,.json", hidden: true, on: { change: importData } }));
+        return k;
+      })(),
     ),
   );
-  $$(".badge.got", $("#me-body")).forEach((el, i) => el.animate([{ transform: "scale(0.4) rotate(-20deg)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 600, delay: 120 + i * 50, easing: SPRING, fill: "backwards" }));
+  if (!prefersReducedMotion())
+    [...$("#stats-body .bento").children].forEach((t, i) => t.animate([{ transform: "translateY(24px) scale(.94)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: 40 * i, easing: "cubic-bezier(.2,1.3,.4,1)", fill: "backwards" }));
+}
+
+/** Today's ring, watch-face style. Drag round the ring to set your daily goal. */
+function goalDial(today) {
+  const R = 46;
+  const C = 2 * Math.PI * R;
+  const NS = "http://www.w3.org/2000/svg";
+  const mk = (tag, attrs) => {
+    const el = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    return el;
+  };
+  const svgEl = mk("svg", { viewBox: "0 0 120 120", class: "dial-svg", "aria-hidden": "true" });
+  for (let t = 0; t < 60; t++) svgEl.append(mk("line", { x1: 60, y1: 6, x2: 60, y2: t % 5 ? 10 : 13, class: "tick", transform: `rotate(${t * 6} 60 60)` }));
+  svgEl.append(mk("circle", { cx: 60, cy: 60, r: R, class: "trk" }));
+  const arc = mk("circle", { cx: 60, cy: 60, r: R, class: "arc", "stroke-dasharray": C, transform: "rotate(-90 60 60)" });
+  const handle = mk("circle", { cx: 60, cy: 60 - R, r: 7, class: "handle" });
+  svgEl.append(arc, handle);
+  const num = h("b", { class: "dial-n", text: String(today) });
+  const of = h("small", { class: "dial-of" });
+  const el = h("div", { class: "tile t-dial tile-dial", role: "slider", tabIndex: 0, "aria-label": "Daily page goal", "aria-valuemin": "5", "aria-valuemax": "200" }, svgEl, h("span", { class: "dial-in" }, num, of), h("small", { class: "t-foot", text: "TODAY · SPIN TO SET GOAL" }));
+  let goal = state.goal;
+  const paint = () => {
+    const frac = Math.min(1, today / goal);
+    arc.style.strokeDashoffset = String(C * (1 - frac));
+    const a = (goal / 200) * 2 * Math.PI;
+    handle.setAttribute("cx", String(60 + Math.sin(a) * R));
+    handle.setAttribute("cy", String(60 - Math.cos(a) * R));
+    of.textContent = `/ ${goal}`;
+    el.setAttribute("aria-valuenow", String(goal));
+    el.classList.toggle("done", today >= goal);
+  };
+  paint();
+  let d = null;
+  const at = (e) => {
+    const r = svgEl.getBoundingClientRect();
+    let a = Math.atan2(e.clientX - (r.left + r.width / 2), -(e.clientY - (r.top + r.height / 2)));
+    if (a < 0) a += 2 * Math.PI;
+    return clamp(Math.round(((a / (2 * Math.PI)) * 200) / 5) * 5, 5, 200);
+  };
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    d = e.pointerId;
+    el.setPointerCapture(d);
+    el.classList.add("grab");
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (d !== e.pointerId) return;
+    const g = at(e);
+    if (g !== goal) {
+      goal = g;
+      buzz(3);
+      paint();
+    }
+  });
+  const up = (e) => {
+    if (d !== e.pointerId) return;
+    d = null;
+    el.classList.remove("grab");
+    if (goal !== state.goal) {
+      commit(S.setGoal(state, goal), null, { keepStats: true });
+      island.say({ icon: "🎯", title: `GOAL: ${goal} PAGES A DAY`, tone: "lime", buzz: false });
+    }
+  };
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+  el.addEventListener("keydown", (e) => {
+    const step = { ArrowUp: 5, ArrowRight: 5, ArrowDown: -5, ArrowLeft: -5 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    goal = clamp(goal + step, 5, 200);
+    paint();
+    commit(S.setGoal(state, goal), null, { keepStats: true });
+  });
+  return el;
 }
 
 function exportData() {
@@ -867,38 +843,238 @@ async function importData(e) {
     if (!next.books.length && !next.xp) throw new Error("empty");
     state = next;
     S.save(globalThis.localStorage, state);
-    render();
-    renderShelf(tabs.current, { switching: true });
-    drawMe();
-    island.say({ icon: "✅", title: "Shelves restored", sub: `${state.books.length} books`, tone: "lime" });
+    renderShelf({ deal: 1 });
+    renderStats();
+    island.say({ icon: "✅", title: "SHELVES RESTORED", sub: `${state.books.length} books`, tone: "lime" });
   } catch {
-    island.say({ icon: "🤔", title: "That file didn't work", sub: "Pick a Shelfie backup (.json)", tone: "pink" });
+    island.say({ icon: "🤔", title: "THAT FILE DIDN'T WORK", sub: "Pick a Shelfie backup (.json)", tone: "pink" });
   }
+}
+
+/* ============================================================
+   Adding books (pull up the + stamp)
+   ============================================================ */
+
+const add = createPanel($("#panel-add"), {
+  onOpen: () => {
+    $("#q").value = "";
+    $("#results").replaceChildren(suggestions());
+    $("#source").textContent = "";
+  },
+  onClose: () => {
+    if (!added.length) return;
+    const where = book(added[added.length - 1])?.shelf;
+    added = [];
+    if (where && where !== shelf) switchShelf(where);
+    else renderShelf();
+  },
+});
+$("#panel-add [data-close]").addEventListener("click", () => add.close());
+let added = [];
+const openAdd = () => add.open();
+
+function suggestions() {
+  const picks = ["Fourth Wing", "Project Hail Mary", "Normal People", "Atomic Habits", "The Hobbit", "Tomorrow, and Tomorrow"];
+  return h("div", { class: "suggest" }, h("small", { class: "p-label", text: "TRY" }), h("div", { class: "chips" }, picks.map((p) => h("button", { type: "button", class: "chip", text: p, on: { click: () => (($("#q").value = p), runSearch()) } }))));
+}
+
+let searchTimer = 0;
+$("#q").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 320);
+});
+$("#q").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  clearTimeout(searchTimer);
+  runSearch();
+  e.currentTarget.blur();
+});
+
+async function runSearch() {
+  const q = $("#q").value.trim();
+  const out = $("#results");
+  if (q.length < 2) return out.replaceChildren(suggestions());
+  out.replaceChildren(h("div", { class: "loading" }, h("i"), h("i"), h("i")));
+  try {
+    const { results, source } = await searchBooks(q);
+    if ($("#q").value.trim() !== q) return;
+    $("#source").textContent = results.length ? `RESULTS FROM ${source === "google" ? "GOOGLE BOOKS" : "OPEN LIBRARY"}` : "";
+    if (!results.length) return out.replaceChildren(h("p", { class: "empty", text: `NOTHING FOR "${q.toUpperCase()}". TRY FEWER WORDS, OR TYPE IT IN BELOW.` }));
+    out.replaceChildren(...results.map(row));
+    if (!prefersReducedMotion()) [...out.children].forEach((el, i) => el.animate([{ opacity: 0, transform: "translateY(20px)" }, { opacity: 1, transform: "none" }], { duration: 420, delay: i * 30, easing: "cubic-bezier(.2,1.3,.4,1)", fill: "backwards" }));
+  } catch (err) {
+    if (err?.name === "AbortError" && $("#q").value.trim() !== q) return;
+    out.replaceChildren(h("p", { class: "empty warn", text: navigator.onLine === false ? "YOU'RE OFFLINE. TYPE IT IN BELOW INSTEAD." : "SEARCH IS HAVING A MOMENT. TRY AGAIN, OR TYPE IT IN BELOW." }));
+  }
+}
+
+const LEVELS = [
+  { at: 70, shelf: "want" },
+  { at: 155, shelf: "reading" },
+  { at: 240, shelf: "read" },
+];
+
+/** A search result. Swipe it right to add it: further means a later shelf. Tap adds to Want. */
+function row(r) {
+  const seed = S.hash(`${r.title}|${r.author}`);
+  const have = state.books.some((b) => (r.key && b.key === r.key) || (b.title === r.title && b.author === r.author));
+  const thumb = h("div", { class: "thumb" }, bookStamp({ ...r, id: "x", seed, shelf: "want", pages: r.pages || 300, page: 0 }).querySelector(".pic"));
+  const label = h("b", { class: "row-label", text: "WANT" });
+  const slab = h("div", { class: "row-under", "aria-hidden": "true" }, label);
+  const face = h(
+    "div",
+    { class: "row-face" },
+    thumb,
+    h("span", { class: "row-text" }, h("b", { text: r.title }), h("small", { text: [r.author, r.year, r.pages ? `${r.pages} PG` : null].filter(Boolean).join(" · ") })),
+    h("span", { class: "row-go", "aria-hidden": "true", text: have ? "✓" : "→" }),
+  );
+  const el = h("div", { class: `row${have ? " have" : ""}`, role: "button", tabIndex: 0, "aria-label": have ? `${r.title}, already on your shelves` : `Add ${r.title} to Want. Swipe right for Reading or Read.` }, slab, face);
+  if (have) return el;
+
+  const doAdd = (to, v = 900) => {
+    if (el.classList.contains("have")) return;
+    el.classList.add("have");
+    const res = commit(S.addBook(state, { ...r, pages: r.pages || 300, shelf: to, seed }), face.querySelector(".row-go"));
+    added.push(res.events.find((e) => e.type === "added")?.book.id);
+    el.dataset.to = to;
+    label.textContent = `+ ${SHELF[to].label}`;
+    burst(face.querySelector(".row-go"), { count: 30, power: 0.7 });
+    const x = new Spring(currentX, { stiffness: 200, damping: 24, onChange: (val) => (face.style.transform = `translateX(${val}px)`) });
+    x.to(el.clientWidth + 40, v);
+    setTimeout(() => {
+      face.querySelector(".row-go").textContent = "✓";
+      x.to(0);
+      el.setAttribute("aria-label", `${r.title}, added to ${SHELF[to].label}`);
+    }, 520);
+  };
+
+  let currentX = 0;
+  let level = -1;
+  const vel = new Velocity();
+  const spring = new Spring(0, {
+    stiffness: 420,
+    damping: 32,
+    onChange: (v) => {
+      currentX = v;
+      face.style.transform = `translateX(${v}px)`;
+    },
+  });
+  let d = null;
+  el.addEventListener("pointerdown", (e) => {
+    if (el.classList.contains("have")) return;
+    d = { id: e.pointerId, x0: e.clientX, y0: e.clientY, mode: null };
+    vel.reset(e.clientX, 0);
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!d || e.pointerId !== d.id) return;
+    const dx = e.clientX - d.x0;
+    const dy = e.clientY - d.y0;
+    if (!d.mode) {
+      if (Math.hypot(dx, dy) < 8) return;
+      d.mode = Math.abs(dx) > Math.abs(dy) ? "swipe" : "scroll";
+      if (d.mode === "swipe") el.setPointerCapture(e.pointerId);
+    }
+    if (d.mode !== "swipe") return;
+    vel.add(e.clientX, 0);
+    const x = dx < 0 ? rubber(dx, 30) : dx > 280 ? 280 + rubber(dx - 280, 40) : dx;
+    spring.jump(x);
+    const lv = LEVELS.reduce((acc, l, k) => (x >= l.at ? k : acc), -1);
+    if (lv !== level) {
+      level = lv;
+      el.dataset.level = String(lv);
+      label.textContent = lv < 0 ? "WANT" : SHELF[LEVELS[lv].shelf].label;
+      if (lv >= 0) {
+        buzz(10);
+        label.animate([{ transform: "scale(1.4)" }, { transform: "none" }], { duration: 300, easing: "cubic-bezier(.2,1.6,.4,1)" });
+      }
+    }
+  });
+  const up = (e) => {
+    if (!d || e.pointerId !== d.id) return;
+    const mode = d.mode;
+    d = null;
+    if (mode === "scroll") return;
+    if (!mode) return doAdd("want");
+    if (level >= 0) {
+      doAdd(LEVELS[level].shelf, vel.get().x);
+      return;
+    }
+    spring.to(0, vel.get().x);
+    el.dataset.level = "-1";
+    level = -1;
+  };
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", () => {
+    d = null;
+    spring.to(0);
+  });
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      doAdd("want");
+    }
+    if (e.key === "ArrowRight") doAdd("reading");
+  });
+  return el;
+}
+
+$("#m-add").addEventListener("click", (e) => {
+  const title = $("#m-title").value.trim();
+  if (!title) {
+    $("#m-title").focus();
+    $("#m-title").animate([{ transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "none" }], { duration: 300 });
+    return;
+  }
+  const res = commit(S.addBook(state, { title, author: $("#m-author").value, pages: $("#m-pages").value, shelf: "want" }), e.currentTarget);
+  added.push(res.events.find((x) => x.type === "added")?.book.id);
+  $("#m-title").value = "";
+  $("#m-author").value = "";
+  add.close();
+});
+
+function loadStarter(el) {
+  let s = state;
+  const base = Date.now();
+  STARTER.forEach((b, k) => {
+    s = S.addBook(s, b).state;
+    const nb = s.books[s.books.length - 1];
+    // Starter books arrive part-read, without pretending you read those pages today.
+    if (b.page) nb.page = nb.best = b.page;
+    if (b.rating) nb.rating = b.rating;
+    nb.touched = base - k;
+  });
+  s = { ...s, xp: state.xp + 50 };
+  commit({ state: s, events: [{ type: "xp", amount: 50 }, { type: "starter" }] }, el);
+  burst(deckEl, { count: 90 });
+  shelf = "want";
+  switchShelf("reading");
 }
 
 /* ============================================================
    Secrets
    ============================================================ */
 
-// Tap the logo five times quickly.
-let logoTaps = [];
-$("#logo").addEventListener("click", () => {
+let lcdTapTimes = [];
+function lcdTaps() {
   const now = Date.now();
-  logoTaps = logoTaps.filter((t) => now - t < 1500).concat(now);
-  play($("#logo"), [{ transform: "none" }, { transform: `rotate(${logoTaps.length % 2 ? -6 : 6}deg) scale(1.08)` }, { transform: "none" }], { duration: 300, easing: SPRING });
-  if (logoTaps.length >= 5) {
-    logoTaps = [];
-    document.body.classList.add("party");
-    setTimeout(() => document.body.classList.remove("party"), 4000);
-    rain({ count: 200, emoji: ["📚", "🪩", "✨", "🦄"] });
-    const r = S.findEgg(state, "app", "party");
-    r.events.forEach((e) => e.type === "egg" && (e.label = "Party shelf"));
-    if (r.events.find((x) => x.type === "egg")?.fresh) commit(r, $("#logo"));
-    else island.say({ icon: "🪩", title: "Party shelf", sub: "You already knew that one", tone: "violet" });
-  }
+  lcdTapTimes = lcdTapTimes.filter((t) => now - t < 1600).concat(now);
+  if (lcdTapTimes.length < 5) return false;
+  lcdTapTimes = [];
+  document.body.classList.add("party");
+  setTimeout(() => document.body.classList.remove("party"), 4000);
+  rain({ count: 220, emoji: ["📚", "🪩", "✨", "🦄"] });
+  const r = S.findEgg(state, "app", "party");
+  r.events.forEach((e) => e.type === "egg" && (e.label = "Party mode"));
+  commit(r, $("#lcd"));
+  return true;
+}
+
+addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (add.isOpen) add.close();
+  else if (stats.isOpen) stats.close();
 });
 
-// The good old Konami code, on a keyboard.
 const KONAMI = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a"];
 let kIdx = 0;
 addEventListener("keydown", (e) => {
@@ -907,44 +1083,43 @@ addEventListener("keydown", (e) => {
   kIdx = 0;
   const r = S.findEgg(state, "app", "konami");
   r.events.forEach((e) => e.type === "egg" && (e.label = "Cheat code"));
-  commit(r, island.el);
+  commit(r, $("#lcd"));
   rain({ count: 160, emoji: ["🎮", "👾", "🕹️"] });
 });
 
 /* ============================================================
-   Wiring
+   Start
    ============================================================ */
 
-$("#level").addEventListener("click", openMe);
-$("#goal").addEventListener("click", openMe);
-$("#badges-all").addEventListener("click", openMe);
-$("#streak").addEventListener("click", (e) => {
-  const n = S.streak(state);
-  bump(e.currentTarget);
-  island.say(n ? { icon: "🔥", title: `${n}-day streak`, sub: S.pagesOn(state) ? "You've read today. Legend." : "Read a page today to keep it alive", tone: "sun" } : { icon: "🕯️", title: "No streak yet", sub: "Log a page today to light it", tone: "sun" });
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && renderHud());
+
+document.body.dataset.shelf = shelf;
+$("#stage-word").textContent = Array(6).fill(SHELF[shelf].label).join(" ");
+renderHud();
+requestAnimationFrame(() => {
+  placeTape(false);
+  renderShelf({ deal: 1 });
 });
-
-function render() {
-  renderTop();
-  renderStats();
-  renderBadges();
-  tabs.counts(Object.fromEntries(S.SHELVES.map((id) => [id, S.shelf(state, id).length])));
-  // While a sheet covers the shelf, refresh it when the sheet closes instead.
-  if (shownShelf && !document.documentElement.classList.contains("sheet-open")) renderShelf(tabs.current);
-}
-
-// Keep the streak and "today" honest if the app stays open past midnight.
-document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && render());
-
-const first = S.shelf(state, "reading").length ? "reading" : S.shelf(state, "want").length ? "want" : state.books.length ? "read" : "reading";
-tabs.select(first, { silent: true, animate: false });
-render();
-renderShelf(first, { switching: true });
 if (!state.seen) {
   state = { ...state, seen: true };
   S.save(globalThis.localStorage, state);
-  setTimeout(() => island.say({ icon: "👋", title: "Welcome to Shelfie", sub: "Add a book to start levelling up", tone: "pink" }), 700);
+  setTimeout(() => island.say({ icon: "👋", title: "WELCOME TO SHELFIE", sub: "Everything here works with a swipe", tone: "pink" }), 900);
 }
+// Hint that stats live below, once.
+if (!hints.has("stats")) setTimeout(() => !stats.isOpen && stats.peek(), 2600);
 
 // Exposed for the browser tests.
-globalThis.__shelfie = { get state() { return state; } };
+globalThis.__shelfie = {
+  get state() {
+    return state;
+  },
+  get shelf() {
+    return shelf;
+  },
+  get top() {
+    return topId;
+  },
+  get pile() {
+    return deck.ids();
+  },
+};

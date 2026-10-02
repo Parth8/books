@@ -1,14 +1,14 @@
 {
-  "name": "Shelfie: your reading, levelled up",
+  "name": "Shelfie: read, swipe, level up",
   "short_name": "Shelfie",
-  "description": "Track what you're reading, what you've read and what's next. Swipe, scroll, level up. No account, no ads.",
+  "description": "A gesture-first reading tracker. Swipe your books, drag to turn pages, spin the dial, level up. No account, no ads.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0b0a12",
-  "theme_color": "#0b0a12",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
