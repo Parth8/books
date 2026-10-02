@@ -17,7 +17,8 @@ export function createPanel(el, { handles = [], onOpen, onClose, onProgress } = 
       el.style.transform = `translate3d(0, ${(v * H).toFixed(1)}px, 0)`;
       const p = Math.max(0, Math.min(1, 1 - v));
       shade.style.opacity = String(p);
-      shade.style.pointerEvents = p > 0.02 ? "auto" : "none";
+      // A peek (or the last moments of closing) must never swallow a swipe on the pile.
+      shade.style.pointerEvents = p > 0.3 ? "auto" : "none";
       shade.classList.toggle("on", p > 0.6);
       el.style.visibility = v >= 0.999 ? "hidden" : "visible";
       onProgress?.(p);
