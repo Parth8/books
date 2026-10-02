@@ -18,6 +18,7 @@ export function createPanel(el, { handles = [], onOpen, onClose, onProgress } = 
       const p = Math.max(0, Math.min(1, 1 - v));
       shade.style.opacity = String(p);
       shade.style.pointerEvents = p > 0.02 ? "auto" : "none";
+      shade.classList.toggle("on", p > 0.6);
       el.style.visibility = v >= 0.999 ? "hidden" : "visible";
       onProgress?.(p);
     },

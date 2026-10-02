@@ -24,6 +24,11 @@ export function poster({ lines, kicker = "", sub = "", tone = "#2b3bff", ink = "
   try {
     el.showPopover?.();
   } catch {}
+  // Long lines ("WELCOME", "HOME, ALEXANDRA.") shrink to fit the width instead of clipping.
+  for (const b of words.querySelectorAll("b")) {
+    const room = b.parentElement.clientWidth;
+    if (room && b.scrollWidth > room) b.style.fontSize = `${(parseFloat(getComputedStyle(b).fontSize) * room) / b.scrollWidth - 0.5}px`;
+  }
   buzz([20, 60, 30, 60, 40]);
   if (emoji) rain({ count: 180, emoji });
 

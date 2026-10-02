@@ -39,12 +39,40 @@ export const BADGES = [
   { id: "eggs-10", emoji: "🐣", name: "Egg Whisperer", text: "Found 10 easter eggs", test: (s) => s.eggs.length >= 10 },
   { id: "month-goal", emoji: "🗓️", name: "Month Maestro", text: "Hit a monthly book goal", test: (s, now) => finishedIn(s, "month", now) >= s.goalMonth },
   { id: "year-goal", emoji: "👑", name: "Year Legend", text: "Hit your yearly book goal", test: (s, now) => finishedIn(s, "year", now) >= s.goalYear },
+  { id: "migrant", emoji: "🧳", name: "Moved In", text: "Brought your Goodreads library", test: (s) => s.eggs.includes("app:goodreads") },
+  { id: "zoo", emoji: "🦙", name: "Zookeeper", text: "Petted 3 passing critters", test: (s) => s.eggs.filter((e) => e.startsWith("app:critter-")).length >= 3 },
+  { id: "combo", emoji: "⚡", name: "Combo Breaker", text: "Hit a ×5 reading combo", test: (s) => s.eggs.includes("app:combo5") },
+  { id: "five-star", emoji: "🤯", name: "Mind Blown", text: "Gave a book the top feeling", test: (s) => s.books.some((b) => b.rating === 5) },
+  { id: "named", emoji: "👋", name: "Hello, You", text: "Told Shelfie your name", test: (s) => !!s.name },
 ];
 
 export function empty() {
   // goal: pages a day. goalMonth and goalYear: books finished. gone: removed book ids, so a
   // removal survives syncing with a copy that still has the book.
-  return { v: 1, books: [], log: {}, xp: 0, goal: 20, goalMonth: 2, goalYear: 24, goalsAt: 0, badges: {}, eggs: [], gone: {}, seen: false };
+  // name: what to call you (a first name or nickname, nothing else). toured: the tour was seen,
+  // so a newly linked device skips it.
+  return { v: 1, books: [], log: {}, xp: 0, goal: 20, goalMonth: 2, goalYear: 24, goalsAt: 0, badges: {}, eggs: [], gone: {}, seen: false, toured: false, name: "", nameAt: 0, resetAt: 0 };
+}
+
+/** A first name or nickname: printable, trimmed, at most 24 characters. */
+export function cleanName(raw) {
+  return String(raw || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 24);
+}
+
+export function setName(state, name, now = new Date()) {
+  return { state: { ...clone(state), name: cleanName(name), nameAt: now.getTime() }, events: [] };
+}
+
+/** ISBN-10 or ISBN-13 digits (an X allowed at the end of an ISBN-10), else null. */
+export function cleanIsbn(raw) {
+  const d = String(raw || "").toUpperCase().replace(/[^0-9X]/g, "");
+  if (/^\d{13}$/.test(d) || /^\d{9}[\dX]$/.test(d)) return d;
+  return null;
 }
 
 export const GOAL_LIMITS = { day: [5, 200], month: [1, 31], year: [1, 365] };
@@ -168,6 +196,7 @@ export function addBook(state, input, now = new Date()) {
     key: typeof input.key === "string" ? input.key.slice(0, 40) : null,
     cats: typeof input.cats === "string" ? input.cats.slice(0, 40) : null,
     blurb: typeof input.blurb === "string" ? input.blurb.slice(0, 280) : null,
+    isbn: cleanIsbn(input.isbn),
     year: Number.isInteger(input.year) ? input.year : null,
     seed: input.seed ?? hash(`${input.title}|${input.author}`),
     rating: 0,
@@ -292,6 +321,10 @@ export function setGoal(state, goal, kind = "day", now = new Date()) {
 export function merge(a, b) {
   a = normalise(a);
   b = normalise(b);
+  // A reset wins over anything from before it (another tab still holding the old shelves).
+  const resetAt = Math.max(a.resetAt || 0, b.resetAt || 0);
+  if ((a.resetAt || 0) < resetAt) a = { ...empty(), resetAt };
+  if ((b.resetAt || 0) < resetAt) b = { ...empty(), resetAt };
   const gone = { ...a.gone };
   for (const [id, t] of Object.entries(b.gone)) gone[id] = Math.max(gone[id] || 0, t);
   const books = new Map();
@@ -323,6 +356,9 @@ export function merge(a, b) {
     eggs: [...new Set([...a.eggs, ...b.eggs])].sort(),
     gone: sorted(gone),
     seen: a.seen || b.seen,
+    toured: !!(a.toured || b.toured),
+    resetAt,
+    ...((b.nameAt || 0) > (a.nameAt || 0) ? { name: b.name || "", nameAt: b.nameAt } : { name: a.name || b.name || "", nameAt: a.nameAt || b.nameAt || 0 }),
     ...(a._owl || b._owl ? { _owl: [a._owl, b._owl].filter(Boolean).sort().pop() } : {}),
   };
 }
@@ -335,7 +371,79 @@ export function normalise(data) {
   for (const k of ["log", "badges", "gone"]) if (!s[k] || typeof s[k] !== "object" || Array.isArray(s[k])) s[k] = {};
   if (!Array.isArray(s.eggs)) s.eggs = [];
   if (!Number.isFinite(s.xp)) s.xp = 0;
+  s.name = cleanName(s.name);
   return s;
+}
+
+/** Everything gone, for a fresh start. Marked, so other open tabs follow instead of restoring. */
+export function reset(now = new Date()) {
+  return { ...empty(), resetAt: now.getTime() };
+}
+
+/* ---------------- importing ---------------- */
+
+const sameBook = (a, b) =>
+  (a.isbn && b.isbn && a.isbn === b.isbn) || (a.title.toLowerCase().replace(/\W+/g, "") === b.title.toLowerCase().replace(/\W+/g, "") && (a.author || "").toLowerCase().replace(/\W+/g, "") === (b.author || "").toLowerCase().replace(/\W+/g, ""));
+
+/**
+ * Bring in many books at once (a Goodreads export). Each input may carry its own shelf,
+ * rating (1..5), and added / finished dates. Books already on the shelves are skipped. Pages
+ * from the past aren't added to today's reading log (that would fake a streak), but there's a
+ * welcome-home XP bonus: 10 per book, up to 1,000.
+ */
+export function importBooks(state, inputs, now = new Date(), { source = "goodreads" } = {}) {
+  const s = clone(state);
+  let added = 0;
+  let skipped = 0;
+  const counts = { reading: 0, want: 0, read: 0 };
+  const base = now.getTime();
+  for (const [k, input] of inputs.entries()) {
+    const title = String(input.title || "").trim().slice(0, 140);
+    if (!title) {
+      skipped++;
+      continue;
+    }
+    const probe = { title, author: String(input.author || "").trim().slice(0, 100), isbn: cleanIsbn(input.isbn) };
+    if (s.books.some((b) => sameBook(b, probe))) {
+      skipped++;
+      continue;
+    }
+    const where = SHELVES.includes(input.shelf) ? input.shelf : "want";
+    const pages = clampInt(input.pages, 1, 5000, 300);
+    const date = (d) => (d instanceof Date && !isNaN(d) ? d.toISOString() : null);
+    const addedAt = date(input.added) || now.toISOString();
+    const finished = where === "read" ? date(input.finished) || addedAt : null;
+    s.books.push({
+      id: newId(),
+      title,
+      author: probe.author,
+      pages,
+      page: where === "read" ? pages : 0,
+      best: where === "read" ? pages : 0,
+      shelf: where,
+      cover: null,
+      img: null,
+      key: typeof input.key === "string" ? input.key.slice(0, 40) : null,
+      cats: null,
+      blurb: null,
+      isbn: probe.isbn,
+      year: Number.isInteger(input.year) ? input.year : null,
+      seed: hash(`${title}|${probe.author}`),
+      rating: where === "read" ? clampInt(input.rating, 0, 5, 0) : 0,
+      added: addedAt,
+      started: where === "reading" ? addedAt : null,
+      finished,
+      // Older activity sorts lower; the import order breaks ties.
+      touched: Date.parse(finished || addedAt) || base - k,
+    });
+    counts[where]++;
+    added++;
+  }
+  if (added) {
+    s.xp += Math.min(1000, added * 10);
+    if (!s.eggs.includes(`app:${source}`)) s.eggs.push(`app:${source}`);
+  }
+  return finish(state, s, [{ type: "imported", added, skipped, counts, source }], now);
 }
 
 /* ---------------- saving ---------------- */

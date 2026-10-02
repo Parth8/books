@@ -12,7 +12,39 @@ No account, no ads, no build step. Everything lives on your own device.
 
 ## Learning it
 
-The first time you open Shelfie, a short **tour** walks through the gestures, and lets you practise each one on a demo stamp (it celebrates when you get it). Replay it any time from the **?** button next to the LCD, or Stats → Settings → How to use. After the tour, a small chip with a ghost finger shows the next gesture you haven't tried yet.
+- **The tour.** The first time you open Shelfie, a short tour walks through the gestures and lets you practise each one on a demo stamp. It celebrates when you get it right. It only runs once: it's remembered on the device and in your synced data, so opening the app from the home screen won't show it again.
+- **Your name.** After the tour, Shelfie asks what to call you (a first name or nickname, nothing else) so the greetings and jokes can use it. Skip it if you like. Change it in Stats → Settings.
+- **Bring your books.** Then it offers to import your Goodreads library or link another device with a sync code.
+- **Explainer pop-ups.** The first time you meet each part of the app (the stamp, the macropad, the shelf tape, the LCD, the stats bar), the screen dims around it and a bright bubble says what it does.
+- **Gesture hints.** A small chip with a ghost finger shows the next gesture you haven't tried yet.
+- **Replaying it.** The **?** button next to the LCD replays the tour or brings the pop-ups back.
+
+## Import from Goodreads
+
+Bring a whole Goodreads library across in about two minutes. Open the importer from the 🧳 **GOODREADS** key on an empty shelf, from search, or from Stats → Import.
+
+1. Open [goodreads.com/review/import](https://www.goodreads.com/review/import) in a browser (the export isn't in the Goodreads app).
+2. Tap **Export Library** and wait for the download link (a few minutes for big libraries).
+3. Pick `goodreads_library_export.csv` in Shelfie.
+
+Before anything is added, you see how many books are on each shelf.
+
+- **Shelves.** Read, Currently Reading and Want to Read map across. Custom shelves land on Want.
+- **Dates and ratings.** Finish dates come with your books, so this year's count and your yearly goal are right straight away. Star ratings come across too, which you can switch off.
+- **Duplicates.** Books already on your shelves (matched by ISBN, or title and author) are skipped, so importing twice is harmless.
+- **Covers.** These come from Open Library by ISBN.
+- **Privacy.** The file is read on your device and never uploaded.
+
+Big libraries stay smooth: only the few stamps near the top of the pile exist on the page at any time.
+
+## Reset
+
+Stats → Settings → **⚠ RESET ALL** wipes every book, page, goal, XP, badge and sticker on the device. It asks twice:
+
+1. A "are you sure?" pop-up, where **No** leaves everything alone.
+2. A red warning that the data can't be recovered, which only unlocks once you type `reset`.
+
+Sound and haptics preferences stay. If sync is on, it's switched off on this device, and the synced copy stays for your other devices.
 
 ## Gestures
 
@@ -61,12 +93,21 @@ The LCD cycles through all three. Crossing one takes over the screen with a post
 
 Every interaction has a synthesised sound (no audio files) and a haptic: page ticks as you scrub, detents on the dial, keycap clicks, swooshes, a postmark thunk, coins for XP, fanfares for finishing and levelling up. Read in bursts and a **combo** builds up. Android vibrates; iPhone (which has no vibration API) gets the system tap through a hidden iOS 18 switch control. Both can be switched off in Stats → Settings.
 
+- **Sound needs a tap first.** Browsers only allow sound after you touch the page, so the audio engine wakes on your first touch and re-wakes whenever the app comes back to the foreground.
+- **iPhone silent switch.** On an iPhone with the silent switch on, web sounds are muted by iOS, but haptics still play.
+
 ## Gamification
 
 - **XP**: 1 per page, 20 for adding a book, 10 for starting one, 100 for finishing, 15 per easter egg, 10 for rating. Only pages beyond your furthest point count, so scrubbing back and forth can't farm XP.
 - **Levels**, from Fresh Spine to Literary Final Boss.
-- **Daily goal**, **streaks**, and **13 badges**.
+- **Daily goal**, **streaks**, and **20 badges**. Earned badges peel off the sheet as die-cut **stickers**.
+- **Combos**: log pages in quick bursts for a ×2, ×3… combo sticker. ×5 is ON FIRE.
+- **Quips**: greetings and reactions that change with the time of day, and use your name if you gave one.
 - **The island**: a black capsule that stretches open from its middle to show XP counting up, badges and streaks.
+
+## Visitors
+
+Every few minutes, never while you're busy, an animal wanders across the bottom of the screen with its own sound and a terrible pun: a llama, a horse, a duck, a cat, a dino, a snail, a hedgehog, a penguin, a turtle, a flamingo, or (rarely) a unicorn. Tap one to pet it. Pet three different ones for the Zookeeper sticker. Turn them off in Stats → Settings → Visitors.
 
 ## Easter eggs
 
@@ -149,6 +190,17 @@ Synced copies expire after 400 days without a save.
 
 ---
 
+## Performance
+
+Shelfie does nothing at all when you aren't touching it, so it doesn't drain the battery or warm the phone:
+
+- **No idle loops.** The liquid stops its animation loop once it's calm. A stamp's cover art animates for a few seconds after it reaches the top, then rests.
+- **Cheap shadows and grain.** Shadows are pre-blurred layers instead of live filters, and the grain is a static background.
+- **Blur only when needed.** The background blur only exists while a panel is open.
+- **A windowed pile.** Only the stamps near the top of the pile exist on the page, whatever the size of your library.
+
+---
+
 ## How it's built
 
 Plain HTML, CSS and native ES modules, served as static files (GitHub Pages works).
@@ -174,6 +226,11 @@ js/
   sync.js             End-to-end encrypted sync: codes, key derivation, AES-GCM, merge rounds
   sfx.js              Synthesised sounds, and haptics (Android vibration, iPhone's system tap)
   tutorial.js         The hands-on tour
+  modal.js            Pop-ups (questions, the name, the two-step reset)
+  tips.js             Spotlight explainer pop-ups, each shown once
+  quips.js            Greetings and jokes, with your name
+  critters.js         The animals that wander by
+  goodreads.js        Reads a Goodreads export (CSV) into books
   util.js             Safe DOM builder, seeded random
 worker/worker.js      The Cloudflare Worker: holds the Google key, searches, caches, stores encrypted sync copies
 tests/
@@ -181,6 +238,7 @@ tests/
   search.test.mjs     Turning search answers into books
   worker.test.mjs     The Worker: key handling, redaction, origin, rate limits, fallback, sync store
   sync.test.mjs       Sync codes and encryption
+  goodreads.test.mjs  Goodreads CSV parsing, importing, names, reset
   no-secrets.test.mjs Fails if anything shaped like a key is committed
   app.e2e.mjs         The whole app with real pointer gestures (Playwright, searches stubbed)
 tools/build-icons.mjs App icons from one SVG mark

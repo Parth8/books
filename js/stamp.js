@@ -96,6 +96,8 @@ export function safeCover(url) {
 export function coverOf(book) {
   if (safeCover(book.img)) return book.img;
   if (Number.isInteger(book.cover)) return `https://covers.openlibrary.org/b/id/${book.cover}-L.jpg?default=false`;
+  // Imported books often only have an ISBN: Open Library has covers by ISBN too.
+  if (typeof book.isbn === "string" && /^[\dX]{10,13}$/.test(book.isbn)) return `https://covers.openlibrary.org/b/isbn/${book.isbn}-L.jpg?default=false`;
   return null;
 }
 
@@ -185,6 +187,7 @@ export function bookStamp(book, { tone } = {}) {
       "aria-label": `${book.title}${book.author ? ` by ${book.author}` : ""}${book.shelf === "reading" ? `, page ${book.page} of ${book.pages}` : ""}`,
       vars: { "--c1": a, "--cbg": bg, "--tone": tone || a },
     },
+    h("i", { class: "stamp-shadow", "aria-hidden": "true" }),
     h("div", { class: "flipper" }, front, back),
   );
 }
@@ -194,6 +197,7 @@ export function addStamp() {
   return h(
     "article",
     { class: "stamp add", "data-id": "add", tabIndex: -1, "aria-label": "Add a book" },
+    h("i", { class: "stamp-shadow", "aria-hidden": "true" }),
     h(
       "div",
       { class: "flipper" },

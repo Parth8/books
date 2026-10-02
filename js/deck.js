@@ -33,31 +33,63 @@ export function createDeck(root, opts) {
     return { x: lerp(0, -W * 1.35, -t), y: lerp(0, 30, -t), r: lerp(0, -16, -t), s: lerp(1, 0.92, -t), o: k < -1 ? 0 : 1 };
   };
 
-  function make(item) {
-    const el = item.el;
-    el.classList.add("card");
-    el.style.position = "absolute";
-    root.append(el);
-    item.m = motion({ x: 0, y: 0, r: 0, s: 1, o: 1 }, (v) => {
+  // Only the stamps near the top exist as elements: a shelf of 500 books still has about 8
+  // stamps in the page. Others are built when they come into view and dropped when they leave.
+  const WINDOW = { behind: 2, ahead: 5 };
+  const inWindow = (j) => j >= i - WINDOW.behind && j <= i + WINDOW.ahead;
+
+  function renderFor(el) {
+    return (v) => {
       el.style.transform = `translate3d(${v.x.toFixed(2)}px, ${v.y.toFixed(2)}px, 0) rotate(${v.r.toFixed(2)}deg) scale(${v.s.toFixed(4)})`;
       el.style.opacity = String(clamp(v.o, 0, 1));
       el.style.visibility = v.o <= 0.01 ? "hidden" : "visible";
-    }, { stiffness: 340, damping: 30, s: { stiffness: 420, damping: 28 } });
-    return item;
+    };
   }
 
-  function layout(shift = 0, { except = null, velocity = {}, soft = false } = {}) {
+  /** Build an item's element (if it hasn't one) at a starting position. */
+  function materialise(it, from) {
+    if (it.el) return it;
+    from = { x: 0, y: 0, r: 0, s: 1, o: 1, ...from };
+    const el = it.make();
+    it.el = el;
+    el.classList.add("card");
+    el.classList.remove("leaving", "top");
+    el.style.position = "absolute";
+    el.inert = true;
+    root.append(el);
+    it.m = motion(from, renderFor(el), { stiffness: 340, damping: 30, s: { stiffness: 420, damping: 28 } });
+    return it;
+  }
+
+  /** Let go of elements far from the top (once they've stopped moving). */
+  function prune() {
+    items.forEach((it, j) => {
+      if (!it.el || inWindow(j) || it.m.moving) return;
+      it.el.remove();
+      it.el = null;
+      it.m = null;
+    });
+  }
+
+  function layout(shift = 0, { except = null, velocity = {} } = {}) {
     items.forEach((it, j) => {
       if (it === except) return;
+      if (!inWindow(j)) {
+        if (it.el) it.m.to(slotPos(j - i + shift), {});
+        return;
+      }
+      // Coming into view from the back of the pile (or from the left, going backwards).
+      materialise(it, j - i > 0 ? { ...slotPos(5), o: 0 } : { ...slotPos(-1.2) });
       const k = j - i + shift;
-      const p = slotPos(k);
       it.el.style.zIndex = String(200 - Math.round((j - i) * 2));
       it.el.classList.toggle("top", j === i);
       it.el.inert = j !== i;
-      if (soft) it.m.to(p, j === i ? velocity : {});
-      else it.m.to(p, j === i ? velocity : {});
+      it.m.to(slotPos(k), j === i ? velocity : {});
     });
+    clearTimeout(pruneTimer);
+    pruneTimer = setTimeout(prune, 900);
   }
+  let pruneTimer = 0;
 
   const top = () => items[i];
 
@@ -71,57 +103,64 @@ export function createDeck(root, opts) {
     }
   }
 
-  /** Replace the pile. `deal` animates a shelf change: old cards drop away, new ones fly in. */
+  /**
+   * Replace the pile. Items are { id, key, make }: `make()` builds the element when needed and
+   * `key` changes when its content does. `deal` animates a shelf change: old cards drop away,
+   * new ones fly in.
+   */
   function set(next, { keep = null, deal = 0 } = {}) {
     W = root.clientWidth * 0.62 || 260;
     const byId = new Map(items.map((it) => [it.id, it]));
     const ids = new Set(next.map((n) => n.id));
     for (const it of items) {
       if (ids.has(it.id) && !deal) continue;
+      if (!it.el) continue;
       // Leaving: drop off the bottom (shelf switch) or shrink away (removed).
-      it.el.inert = true;
-      it.el.classList.remove("top");
-      it.el.classList.add("leaving");
+      const el = it.el;
+      el.inert = true;
+      el.classList.remove("top");
+      el.classList.add("leaving");
       it.m.to(deal ? { y: 420, r: deal * -12, x: deal * -60, o: 0 } : { s: 0.4, o: 0 });
-      it.m.settle().then(() => it.el.remove());
+      it.m.settle().then(() => el.remove());
     }
     const prevTop = top()?.id;
     items = next.map((n) => {
       const old = !deal && byId.get(n.id);
       if (old) {
-        if (old.el !== n.el) {
-          // Fresh element for the same book (its content changed): swap it in place.
-          n.el.style.cssText = old.el.style.cssText;
-          old.el.replaceWith(n.el);
-          n.el.classList.add("card");
-          old.m = motion({ ...old.m.values }, renderFor(n.el), { stiffness: 340, damping: 30 });
-          old.el = n.el;
+        old.make = n.make;
+        if (old.key !== n.key && old.el) {
+          // Its content changed: a fresh element in the same place.
+          const el = n.make();
+          el.style.cssText = old.el.style.cssText;
+          el.classList.add("card");
+          old.el.replaceWith(el);
+          old.el = el;
+          old.m = motion({ ...old.m.values }, renderFor(el), { stiffness: 340, damping: 30 });
         }
+        old.key = n.key;
         return old;
       }
-      const it = make({ id: n.id, el: n.el });
-      it.m.jump(deal ? { x: deal * 120, y: -60 - Math.random() * 40, r: deal * 14, s: 0.8, o: 0 } : { x: 0, y: 40, s: 0.6, o: 0 });
-      return it;
+      return { id: n.id, key: n.key, make: n.make, el: null, m: null };
     });
     const want = keep ?? prevTop;
     const at = deal ? 0 : items.findIndex((it) => it.id === want);
     i = clamp(at < 0 ? i : at, 0, items.length - 1);
     if (deal) {
-      items.forEach((it, j) => setTimeout(() => layoutOne(it, j), 60 + j * 55));
-    } else layout();
+      items.forEach((it, j) => {
+        if (!inWindow(j)) return;
+        materialise(it, { x: deal * 120, y: -60 - Math.random() * 40, r: deal * 14, s: 0.8, o: 0 });
+        it.el.style.zIndex = String(200 - Math.round((j - i) * 2));
+        setTimeout(() => layoutOne(it, j), 60 + (j - i) * 55);
+      });
+    } else {
+      items.forEach((it, j) => inWindow(j) && !it.el && materialise(it, { x: 0, y: 40, r: 0, s: 0.6, o: 0 }));
+      layout();
+    }
     opts.onIndex?.(top()?.id, i);
   }
 
-  function renderFor(el) {
-    return (v) => {
-      el.style.transform = `translate3d(${v.x.toFixed(2)}px, ${v.y.toFixed(2)}px, 0) rotate(${v.r.toFixed(2)}deg) scale(${v.s.toFixed(4)})`;
-      el.style.opacity = String(clamp(v.o, 0, 1));
-      el.style.visibility = v.o <= 0.01 ? "hidden" : "visible";
-    };
-  }
-
   function layoutOne(it, j) {
-    if (!items.includes(it)) return;
+    if (!items.includes(it) || !it.el) return;
     it.el.style.zIndex = String(200 - Math.round((j - i) * 2));
     it.el.classList.toggle("top", j === i);
     it.el.inert = j !== i;
@@ -243,6 +282,7 @@ export function createDeck(root, opts) {
         layout(Math.min(s, 1));
         // The card coming back in follows the finger directly.
         const prev = items[i - 1];
+        if (!prev.el) materialise(prev, slotPos(-1));
         const k = -1 + Math.min(s * 1.15, 1);
         prev.m.jump({ ...slotPos(k), y: slotPos(k).y + g.dy * 0.22 });
       }

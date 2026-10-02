@@ -19,6 +19,7 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
   let t0 = performance.now();
   let alive = true;
   let calm = 0;
+  let awakeUntil = performance.now() + 2500; // the idle ripple runs a little after each touch, then rests
   const lvl = new Spring(level, { stiffness: 120, damping: 18, onChange: () => run() });
 
   function size() {
@@ -60,7 +61,9 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
       const pts = [];
       for (let i = 0; i < N; i++) {
         const x = (i / (N - 1)) * w;
-        const idle = reduced ? 0 : Math.sin(time * 2.2 + i * 0.45) * 2.2 + Math.sin(time * 1.3 - i * 0.3) * 1.4;
+        // The idle ripple fades out as the liquid goes to rest, so the last frame is flat and still.
+        const fade = Math.max(0, Math.min(1, (awakeUntil - t) / 800));
+        const idle = reduced ? 0 : (Math.sin(time * 2.2 + i * 0.45) * 2.2 + Math.sin(time * 1.3 - i * 0.3) * 1.4) * fade;
         pts.push([x, Math.max(-6, base + h[i] + idle)]);
       }
       // Body
@@ -111,13 +114,18 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
       }
     }
     calm = energy < 0.5 && !bubbles.length && !lvl.moving ? calm + 1 : 0;
-    // Keep a gentle idle ripple going, but stop the loop when there's nothing to show.
-    if (level > 0.001 && !reduced && document.visibilityState === "visible") run();
-    else if (calm < 30) run();
+    // Draw only while something is moving. At rest the canvas keeps its last (still) frame and
+    // costs nothing: no loop, no repaint, no battery.
+    const waking = t < awakeUntil && !reduced && document.visibilityState === "visible";
+    if (waking || calm < 20) run();
   }
 
   function run() {
     if (alive) raf ||= requestAnimationFrame(frame);
+  }
+  function wake(ms = 2500) {
+    awakeUntil = Math.max(awakeUntil, performance.now() + ms);
+    run();
   }
 
   const ro = new ResizeObserver(() => {
@@ -132,18 +140,18 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
       frac = Math.min(1, Math.max(0, frac));
       if (immediate) lvl.jump(frac);
       else lvl.to(frac);
-      run();
+      wake();
     },
     /** A push on the surface: up to ±1 strength, at x (0..1, default middle). */
     splash(strength, at = 0.5) {
       const c = Math.round(at * (N - 1));
       for (let i = 0; i < N; i++) v[i] += strength * 9 * Math.exp(-((i - c) ** 2) / 18);
-      run();
+      wake();
     },
     /** Tilt it (a sideways flick): positive tips the right side up. */
     slosh(strength) {
       for (let i = 0; i < N; i++) v[i] += (strength * 6 * (i - N / 2)) / (N / 2);
-      run();
+      wake();
     },
     color(c) {
       color = c;

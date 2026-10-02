@@ -7,7 +7,7 @@
 // require it anyway).
 
 const KEY = "shelfie.fx";
-let prefs = { sound: true, haptics: true };
+let prefs = { sound: true, haptics: true, visitors: true };
 try {
   prefs = { ...prefs, ...JSON.parse(localStorage.getItem(KEY) || "{}") };
 } catch {}
@@ -19,8 +19,12 @@ export const fx = {
   get haptics() {
     return prefs.haptics;
   },
+  get visitors() {
+    return prefs.visitors !== false;
+  },
   set(k, v) {
     prefs[k] = !!v;
+    if (k === "sound" && v) unlock();
     try {
       localStorage.setItem(KEY, JSON.stringify(prefs));
     } catch {}
@@ -30,48 +34,53 @@ export const fx = {
 /* ---------------- haptics ---------------- */
 
 const canVibrate = typeof navigator !== "undefined" && typeof navigator.vibrate === "function";
-let iosSwitch = null;
+const coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 
+/**
+ * iPhone has no vibration API, but iOS 18 plays the system tap when a switch-style checkbox
+ * flips. A fresh hidden switch is flipped and removed for each tap (the reliable way: a
+ * long-lived one stops responding in some versions and in home-screen apps).
+ */
 function iosTap() {
-  if (!iosSwitch) {
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.setAttribute("switch", "");
-    input.tabIndex = -1;
-    input.setAttribute("aria-hidden", "true");
-    iosSwitch = document.createElement("label");
-    iosSwitch.className = "haptic-switch";
-    iosSwitch.setAttribute("aria-hidden", "true");
-    iosSwitch.append(input);
-    document.body.append(iosSwitch);
-  }
-  iosSwitch.click();
+  const label = document.createElement("label");
+  label.ariaHidden = "true";
+  label.style.display = "none";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.setAttribute("switch", "");
+  label.append(input);
+  document.head.append(label);
+  label.click();
+  label.remove();
 }
 
+// Android ignores pulses that are too short on many phones, so nothing here is under 12 ms.
 const PATTERNS = {
-  tick: [4],
-  light: [8],
-  medium: [16],
-  heavy: [28],
-  select: [6],
-  success: [12, 60, 22],
-  warning: [20, 50, 20],
-  error: [40, 40, 40, 40, 40],
-  celebrate: [20, 50, 30, 50, 60],
-  thud: [35],
+  tick: [12],
+  light: [16],
+  medium: [24],
+  heavy: [40],
+  select: [14],
+  success: [18, 60, 30],
+  warning: [30, 50, 30],
+  error: [50, 40, 50, 40, 50],
+  celebrate: [30, 50, 40, 50, 80],
+  thud: [45],
 };
 
 /** A pattern name, a number of ms, or an array of on/off ms. */
 export function haptic(p = "light") {
   if (!prefs.haptics) return;
   if (typeof navigator !== "undefined" && navigator.userActivation && !navigator.userActivation.hasBeenActive) return;
-  const pattern = typeof p === "string" ? PATTERNS[p] || PATTERNS.light : Array.isArray(p) ? p : [p];
+  const pattern = typeof p === "string" ? PATTERNS[p] || PATTERNS.light : Array.isArray(p) ? p : [Math.max(12, p)];
   try {
-    if (canVibrate) return navigator.vibrate(pattern);
-    // iOS: one tap per "on" segment.
+    if (canVibrate) return void navigator.vibrate(pattern);
+    if (!coarse) return; // desktop: nothing to tap
+    // iOS: the first tap now (inside the touch, where iOS allows it), the rest of a pattern after.
+    iosTap();
     let t = 0;
     pattern.forEach((ms, i) => {
-      if (i % 2 === 0) setTimeout(iosTap, t);
+      if (i > 0 && i % 2 === 0) setTimeout(iosTap, t);
       t += ms;
     });
   } catch {}
@@ -82,24 +91,47 @@ export function haptic(p = "light") {
 let ctx = null;
 let master = null;
 
-function audio() {
-  if (!prefs.sound) return null;
-  if (!ctx) {
-    const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
-    if (!AC) return null;
-    ctx = new AC();
-    master = ctx.createGain();
-    master.gain.value = 0.5;
-    const comp = ctx.createDynamicsCompressor();
-    master.connect(comp).connect(ctx.destination);
-  }
-  if (ctx.state === "suspended") ctx.resume();
+function make() {
+  const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!AC) return null;
+  ctx = new AC({ latencyHint: "interactive" });
+  master = ctx.createGain();
+  master.gain.value = 0.5;
+  const comp = ctx.createDynamicsCompressor();
+  master.connect(comp).connect(ctx.destination);
   return ctx;
 }
 
-// Unlock audio on the first touch (iOS needs it started inside a gesture).
-if (typeof addEventListener === "function")
-  addEventListener("pointerdown", () => audio(), { once: true, capture: true });
+function audio() {
+  if (!prefs.sound) return null;
+  if (!ctx) return null; // created inside a touch only (see unlock), or iOS keeps it muted
+  return ctx.state === "running" ? ctx : null;
+}
+
+/**
+ * iOS (and Chrome) only let audio start inside a touch, and iOS suspends it again whenever
+ * the app goes to the background or the screen locks. So on every touch, if it isn't running,
+ * create or resume it and play one silent sample, which is what actually unlocks it on iOS.
+ */
+function unlock() {
+  if (!prefs.sound) return;
+  try {
+    if (!ctx && !make()) return;
+    if (ctx.state !== "running") {
+      ctx.resume?.();
+      const b = ctx.createBuffer(1, 1, ctx.sampleRate);
+      const src = ctx.createBufferSource();
+      src.buffer = b;
+      src.connect(ctx.destination);
+      src.start(0);
+    }
+  } catch {}
+}
+if (typeof addEventListener === "function") {
+  for (const type of ["pointerdown", "touchend", "keydown"]) addEventListener(type, unlock, { capture: true, passive: true });
+  // After a phone call, lock screen or app switch, iOS marks audio "interrupted": try again.
+  document.addEventListener?.("visibilitychange", () => document.visibilityState === "visible" && ctx && ctx.state !== "running" && ctx.resume?.().catch(() => {}));
+}
 
 function tone(c, { f = 440, to = null, type = "sine", dur = 0.12, gain = 0.3, at = 0, attack = 0.005 }) {
   const t = c.currentTime + at;
@@ -139,6 +171,35 @@ function noise(c, { dur = 0.1, gain = 0.2, type = "bandpass", f = 2000, to = nul
   src.stop(t + dur + 0.02);
 }
 
+/** A voice that glides through pitches, with vibrato: for the animals. */
+function voice(c, { type = "sawtooth", f = [400, 600], dur = 0.5, vib = 0, vibDepth = 0, gain = 0.12, lp = 2400, at = 0 }) {
+  const t = c.currentTime + at;
+  const o = c.createOscillator();
+  o.type = type;
+  o.frequency.setValueAtTime(f[0], t);
+  f.slice(1).forEach((hz, k) => o.frequency.linearRampToValueAtTime(hz, t + ((k + 1) / (f.length - 1)) * dur));
+  if (vib) {
+    const lfo = c.createOscillator();
+    const lg = c.createGain();
+    lfo.frequency.value = vib;
+    lg.gain.value = vibDepth;
+    lfo.connect(lg).connect(o.frequency);
+    lfo.start(t);
+    lfo.stop(t + dur + 0.05);
+  }
+  const filt = c.createBiquadFilter();
+  filt.type = "lowpass";
+  filt.frequency.value = lp;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t + 0.04);
+  g.gain.setValueAtTime(gain, t + dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(filt).connect(g).connect(master);
+  o.start(t);
+  o.stop(t + dur + 0.05);
+}
+
 const NOTES = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.5, 1567.98, 1760, 2093];
 
 const SOUNDS = {
@@ -171,6 +232,16 @@ const SOUNDS = {
   },
   drop: (c) => (tone(c, { f: 700, to: 200, dur: 0.18, gain: 0.25 }), noise(c, { dur: 0.1, type: "lowpass", f: 800, gain: 0.3, at: 0.1 })),
   open: (c) => tone(c, { f: 300, to: 600, type: "triangle", dur: 0.14, gain: 0.15 }),
+  // The passing critters.
+  hum: (c) => voice(c, { type: "triangle", f: [220, 260, 240], dur: 0.9, vib: 6, vibDepth: 12, gain: 0.16, lp: 1200 }),
+  neigh: (c) => voice(c, { f: [700, 1100, 900, 500], dur: 0.8, vib: 14, vibDepth: 60, gain: 0.08, lp: 3000 }),
+  quack: (c) => [0, 0.16].forEach((at) => voice(c, { type: "square", f: [520, 380], dur: 0.12, gain: 0.08, lp: 1400, at })),
+  meow: (c) => voice(c, { type: "triangle", f: [500, 900, 650], dur: 0.6, vib: 5, vibDepth: 10, gain: 0.14, lp: 2600 }),
+  rawr: (c) => (voice(c, { f: [180, 120, 90], dur: 0.7, vib: 30, vibDepth: 20, gain: 0.16, lp: 900 }), noise(c, { dur: 0.6, type: "lowpass", f: 600, gain: 0.15 })),
+  squeak: (c) => [0, 0.12].forEach((at) => tone(c, { f: 1800, to: 2600, dur: 0.08, gain: 0.09, at })),
+  clop: (c) => [0, 0.14, 0.38, 0.52].forEach((at) => noise(c, { dur: 0.04, f: 1800, q: 3, gain: 0.25, at })),
+  honk: (c) => voice(c, { type: "square", f: [330, 300], dur: 0.35, gain: 0.07, lp: 1000 }),
+  chirp: (c) => [0, 0.1, 0.2].forEach((at) => tone(c, { f: 2600, to: 3400, dur: 0.06, gain: 0.07, at })),
   close: (c) => tone(c, { f: 600, to: 280, type: "triangle", dur: 0.14, gain: 0.15 }),
 };
 

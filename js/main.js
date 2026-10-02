@@ -21,6 +21,11 @@ import { burst, rain, floatText, pages as flutter, coins, shockwave, shake } fro
 import { sound, haptic, feel, fx } from "./sfx.js";
 import { createSync, prettyCode } from "./sync.js";
 import { startTutorial } from "./tutorial.js";
+import { popup } from "./modal.js";
+import { tip, holdTipsWhile, resetTips } from "./tips.js";
+import { createCritters } from "./critters.js";
+import * as Q from "./quips.js";
+import { fromGoodreads } from "./goodreads.js";
 import { poke } from "./eggs.js";
 import { searchBooks } from "./search.js";
 import { Spring, Velocity, rubber, project } from "./physics.js";
@@ -96,18 +101,25 @@ function celebrate(events, at) {
     const now = Date.now();
     combo = now - combo.t < 90000 ? { n: combo.n + 1, t: now } : { n: 1, t: now };
     if (combo.n >= 2) showCombo(combo.n);
+    if (combo.n === 5)
+      setTimeout(() => {
+        const r = S.findEgg(state, "app", "combo5");
+        r.events.forEach((e) => e.type === "egg" && (e.label = "Combo ×5"));
+        if (r.events.find((x) => x.type === "egg")?.fresh) commit(r, $("#stage"));
+      }, 1600);
   }
   const msgs = [];
   for (const e of events) {
+    if (e.type === "imported" && e.added) msgs.push({ icon: "🧳", title: "LIBRARY IMPORTED", sub: `${fmt(e.added)} books moved in`, tone: "pink" });
     if (e.type === "starter") msgs.push({ icon: "📚", title: "STARTER STACK LOADED", sub: "Swipe through, drag a book up to read", tone: "pink" });
-    if (e.type === "added") msgs.push({ icon: "📮", title: `ADDED TO ${SHELF[e.book.shelf].label}`, sub: e.book.title, tone: "pink" });
+    if (e.type === "added") msgs.push({ icon: "📮", title: `ADDED TO ${SHELF[e.book.shelf].label}`, sub: `${e.book.title} · ${Q.added(state.name)}`, tone: "pink" });
     if (e.type === "moved") msgs.push({ icon: e.shelf === "reading" ? "📖" : e.shelf === "want" ? "🔖" : "✅", title: `MOVED TO ${SHELF[e.shelf].label}`, sub: e.book.title, tone: e.shelf === "want" ? "sun" : "cyan" });
     if (e.type === "milestone") {
       msgs.push({ icon: { 25: "🌒", 50: "🌓", 75: "🌔" }[e.pct], title: `${e.pct}% THROUGH`, sub: e.book.title, tone: "lime" });
       burst(at || deckEl, { count: 50 + e.pct / 2 });
     }
     if (e.type === "finished") {
-      queuePoster({ kicker: "BOOK FINISHED", lines: ["DONE."], sub: e.book.title, tone: "#ffd60a", ink: "#0d0d0d", art: bookStamp({ ...e.book, shelf: "read", finished: new Date().toISOString() }), emoji: ["📚", "⭐", "🎉"], sounds: ["stamp", "fanfare"] });
+      queuePoster({ kicker: "BOOK FINISHED", lines: ["DONE."], sub: `${e.book.title}. ${Q.finished(state.name)}`, tone: "#ffd60a", ink: "#0d0d0d", art: bookStamp({ ...e.book, shelf: "read", finished: new Date().toISOString() }), emoji: ["📚", "⭐", "🎉"], sounds: ["stamp", "fanfare"] });
       shockwave(at || deckEl, "#ffd60a");
       shake($("#stage"), 10);
     }
@@ -124,7 +136,7 @@ function celebrate(events, at) {
   }
   if (!msgs.length && xp) {
     const p = S.pagesOn(state);
-    msgs.push({ icon: "⚡", title: `${p}/${state.goal} PAGES TODAY`, sub: S.levelProgress(state.xp).title, tone: "lime", bar: Math.min(1, p / state.goal) });
+    msgs.push({ icon: "⚡", title: `${p}/${state.goal} PAGES TODAY`, sub: Q.pages(state.name, xp), tone: "lime", bar: Math.min(1, p / state.goal) });
   }
   if (msgs.length && xp) Object.assign(msgs[0], { value: xp, unit: " XP" });
   for (const m of msgs) island.say(m);
@@ -136,6 +148,7 @@ function showCombo(n) {
   sound("combo", n);
   haptic(n >= 5 ? "celebrate" : "success");
   const el = h("div", { class: `combo${n >= 5 ? " hot" : ""}`, "aria-hidden": "true" }, h("b", { text: `×${n}` }), h("small", { text: n >= 5 ? "ON FIRE" : "COMBO" }));
+  if (n === 3 || n === 6) island.say({ icon: "⚡", title: Q.combo(state.name, n).toUpperCase(), tone: "lime", buzz: false });
   $("#stage").append(el);
   burst(el, { count: 10 + n * 6, emoji: n >= 5 ? ["🔥"] : null });
   const done = () => el.remove();
@@ -154,7 +167,7 @@ function lcdLines() {
   const y = new Date().getFullYear();
   const mon = new Date().toLocaleDateString("en-GB", { month: "short" }).toUpperCase();
   return [
-    `LV${String(lp.level).padStart(2, "0")} · ${fmt(state.xp)} XP`,
+    state.name ? `HI ${state.name.toUpperCase().slice(0, 12)} · LV${String(lp.level).padStart(2, "0")}` : `LV${String(lp.level).padStart(2, "0")} · ${fmt(state.xp)} XP`,
     `TODAY ${S.pagesOn(state)}/${state.goal} PG`,
     `${mon} ${S.finishedIn(state, "month")}/${state.goalMonth} BOOKS`,
     `${y} ${S.finishedIn(state, "year")}/${state.goalYear} BOOKS`,
@@ -303,21 +316,13 @@ function switchShelf(id, { velocity = 0 } = {}) {
    ============================================================ */
 
 const deckEl = $("#deck");
-const cache = new Map(); // id -> { key, el }
 const keyOf = (b) => JSON.stringify([b.title, b.author, b.cover, b.img, b.pages, b.shelf, b.rating, b.finished]);
-let addEl = addStamp();
 
-function stampFor(b) {
-  const k = keyOf(b);
-  const hit = cache.get(b.id);
-  if (hit && hit.key === k) {
-    patchStamp(hit.el, b);
-    return hit.el;
-  }
-  const el = bookStamp(b, { tone: SHELF[b.shelf].tone });
-  cache.set(b.id, { key: k, el });
-  return el;
-}
+/** Builds a book's stamp from its latest version, when the pile needs it. */
+const makeStamp = (id) => () => {
+  const b = book(id);
+  return b ? bookStamp(b, { tone: SHELF[b.shelf].tone }) : addStamp();
+};
 
 function patchStamp(el, b) {
   if (b.shelf !== "reading") return;
@@ -329,13 +334,14 @@ function patchStamp(el, b) {
 
 function renderShelf({ deal = 0 } = {}) {
   const books = S.shelf(state, shelf);
-  if (deal) {
-    cache.clear();
-    addEl = addStamp();
-  }
-  const items = books.map((b) => ({ id: b.id, el: stampFor(b) }));
-  items.push({ id: "add", el: addEl });
+  const items = books.map((b) => ({ id: b.id, key: keyOf(b), make: makeStamp(b.id) }));
+  items.push({ id: "add", key: "add", make: () => addStamp() });
   deck.set(items, { deal });
+  // Page counts change in place, so the stamp (and its liquid) stays put.
+  for (const b of books) {
+    const el = deck.item(b.id)?.el;
+    if (el) patchStamp(el, b);
+  }
   renderHud();
 }
 
@@ -406,9 +412,16 @@ let topId = null;
 let liquid = null;
 let liquidEl = null;
 
+let aliveTimer = 0;
 function onTop(id) {
   if (topId !== id) deckEl.querySelectorAll(".stamp.flipped").forEach((s) => s.classList.remove("flipped"));
   topId = id;
+  // The cover art plays for a few seconds when a stamp lands on top, then rests (battery).
+  deckEl.querySelectorAll(".stamp.alive").forEach((s) => s.classList.remove("alive"));
+  const topEl = deck.top?.el;
+  topEl?.classList.add("alive");
+  clearTimeout(aliveTimer);
+  aliveTimer = setTimeout(() => topEl?.classList.remove("alive"), 6000);
   const b = book(id);
   const canvas = deck.top?.el.querySelector("canvas.liquid");
   if (canvas !== liquidEl) {
@@ -555,7 +568,6 @@ function dropTo(id, zone) {
   if (zone === "bin") {
     const before = state;
     commit(S.removeBook(state, id));
-    cache.delete(id);
     island.say({ icon: "🗑️", title: "REMOVED", sub: `${b.title} · tap to undo`, tone: "pink", action: () => undo(id, before) });
   } else {
     commit(S.moveBook(state, id, zone), $(`.zone[data-zone="${zone}"]`));
@@ -727,7 +739,7 @@ function renderDock() {
       ),
     ];
   } else {
-    screenEl = screen(mode === "empty" ? ["SHELVES EMPTY", "ADD A BOOK, OR", "LOAD A STARTER STACK"] : ["ADD A BOOK", "PULL THE + STAMP UP", "OR PRESS SEARCH"]);
+    screenEl = screen(mode === "empty" ? [state.name ? `HI ${state.name.toUpperCase().slice(0, 14)}!` : "SHELVES EMPTY", "SEARCH, IMPORT FROM", "GOODREADS, OR TRY A DEMO"] : ["ADD A BOOK", "PULL THE + STAMP UP", "OR PRESS SEARCH"]);
     body = [
       h(
         "div",
@@ -735,9 +747,10 @@ function renderDock() {
         screenEl,
         h(
           "div",
-          { class: "keys two" },
+          { class: mode === "empty" ? "keys three" : "keys two" },
           key("SEARCH", "k-blue wide", () => openAdd(), { sub: "FIND A BOOK" }),
-          mode === "empty" ? key("⚡", "k-yellow", (e) => loadStarter(e.currentTarget), { aria: "Load a starter stack", sub: "STARTER" }) : key("📊", "k-cream", () => stats.open(), { aria: "Stats", sub: "STATS" }),
+          key("🧳", "k-pink", () => openImport(), { aria: "Import from Goodreads", sub: "GOODREADS" }),
+          mode === "empty" ? key("⚡", "k-yellow", (e) => loadStarter(e.currentTarget), { aria: "Load a starter stack", sub: "DEMO" }) : null,
         ),
       ),
     ];
@@ -818,7 +831,7 @@ function renderStats() {
   const tile = (cls, ...kids) => h("div", { class: `tile ${cls}` }, ...kids);
   const num = (n, cls = "big") => h("b", { class: cls, "data-n": String(n), text: fmt(n) });
   const year = new Date().getFullYear();
-  $("#stats-body").replaceChildren(
+  fill($("#stats-body"),
     h(
       "div",
       { class: "bento" },
@@ -873,17 +886,33 @@ function renderStats() {
         return k;
       })(),
     ),
+    h("h3", { class: "p-h", text: "IMPORT" }),
+    h(
+      "div",
+      { class: "tile t-import span2" },
+      h("small", { text: "🧳 FROM GOODREADS" }),
+      h("p", { class: "sync-text", text: "Bring your whole library in: read (with dates and ratings), currently reading, and want-to-read. The file never leaves your device." }),
+      h("div", { class: "keys one" }, key("IMPORT", "k-dark wide", () => openImport(), { sub: "GOODREADS LIBRARY" })),
+    ),
     h("h3", { class: "p-h", text: "SETTINGS" }),
     h(
       "div",
       { class: "keys three p-actions" },
+      key("👋", "k-cream", () => askName({ edit: true }), { sub: state.name ? state.name.toUpperCase().slice(0, 12) : "YOUR NAME", aria: "Change your name" }),
       toggleKey("🔊", "SOUND", "sound"),
       toggleKey("📳", "HAPTICS", "haptics"),
+    ),
+    h(
+      "div",
+      { class: "keys three p-actions" },
       key("?", "k-yellow", () => {
         stats.close();
-        setTimeout(() => startTutorial({ onDone: tutorialDone }), 350);
+        setTimeout(() => $("#help").click(), 350);
       }, { sub: "HOW TO USE", aria: "How to use Shelfie" }),
+      toggleKey("🦙", "VISITORS", "visitors"),
+      key("⚠", "k-red", () => resetFlow(), { sub: "RESET ALL", aria: "Reset all data" }),
     ),
+    h("p", { class: "p-note", text: "IPHONE ON SILENT? SOUNDS FOLLOW THE SILENT SWITCH; HAPTICS STILL PLAY." }),
   );
   if (!prefersReducedMotion()) {
     [...$("#stats-body").querySelectorAll(".tile, .mini")].forEach((t, i) => t.animate([{ transform: "translateY(24px) scale(.94)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: Math.min(600, 35 * i), easing: "cubic-bezier(.2,1.3,.4,1)", fill: "backwards" }));
@@ -1014,6 +1043,160 @@ function goalDial({ kind, label, unit, value, target, cls, wide = false }) {
     save();
   });
   return el;
+}
+
+/* ---------------- reset ---------------- */
+
+async function resetFlow() {
+  const sure = await popup({
+    tone: "orange",
+    icon: "🧨",
+    title: "RESET YOUR DATA?",
+    text: `This wipes every book, page, goal, XP, badge and sticker on this device${state.name ? `, ${state.name}` : ""}. Handy after playing around.`,
+    actions: [
+      { id: "no", label: "NO, KEEP IT", cancel: true, primary: false },
+      { id: "yes", label: "YES, RESET" },
+    ],
+  });
+  if (sure !== "yes") return;
+  const res = await popup({
+    tone: "danger",
+    danger: true,
+    icon: "⚠",
+    title: "THIS CAN'T BE UNDONE",
+    body: h(
+      "div",
+      { class: "danger-body" },
+      h("p", { class: "danger-text", text: "Once your data is deleted, it's gone for good. There's no way to recover it." }),
+      sync.on ? h("p", { class: "pop-text", text: "Sync will be switched off on this device. The synced copy stays for your other devices." }) : null,
+      h("p", { class: "pop-text" }, "To reset, type ", h("b", { class: "danger-word", text: "reset" }), " below."),
+    ),
+    input: { placeholder: "type reset", max: 12, label: "Type reset to confirm", match: (v) => v.trim().toLowerCase() === "reset" },
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      { id: "reset", label: "DELETE EVERYTHING", primary: true, danger: true },
+    ],
+    sound: "error",
+  });
+  if (res.id !== "reset") return;
+  // Gone: this device's shelves, sync link, tour and tips. Sound/haptic preferences stay.
+  sync.disable();
+  try {
+    // You already know the gestures, so the tour stays seen; the name and import offer come back.
+    const keep = new Set(["shelfie.fx", TOUR]);
+    for (const k of Object.keys(localStorage)) if (k === S.KEY || k.startsWith(`${S.KEY}.`) || (k.startsWith("shelfie.") && !keep.has(k))) localStorage.removeItem(k);
+    localStorage.setItem(S.KEY, JSON.stringify({ ...S.reset(), toured: true }));
+    sessionStorage.setItem("shelfie.fresh", "1");
+  } catch {}
+  stats.close();
+  feel("drop", "error");
+  shake(document.body, 14);
+  rain({ count: 120, emoji: ["💨", "🧹"] });
+  setTimeout(() => location.reload(), 1200);
+}
+
+/* ---------------- Goodreads import ---------------- */
+
+const imp = createPanel($("#panel-import"), {
+  onOpen: () => {
+    feel("open", "medium");
+    showImportStart();
+  },
+  onClose: () => feel("close", "light"),
+});
+$("#panel-import [data-close]").addEventListener("click", () => imp.close());
+function openImport() {
+  if (stats.isOpen) stats.close();
+  if (add.isOpen) add.close();
+  setTimeout(() => imp.open(), 200);
+}
+
+/** replaceChildren, skipping the null / false left by optional parts. */
+function fill(el, ...kids) {
+  el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
+}
+
+function showImportStart(error = "") {
+  const file = h("input", { type: "file", accept: ".csv,text/csv", hidden: true, id: "gr-file", on: { change: (e) => e.target.files?.[0] && readExport(e.target.files[0]) } });
+  const drop = h("label", { class: "gr-drop", for: "gr-file" }, h("span", { class: "gr-drop-icon", text: "📄" }), h("b", { text: "PICK YOUR EXPORT" }), h("small", { text: "goodreads_library_export.csv" }), file);
+  drop.addEventListener("dragover", (e) => (e.preventDefault(), drop.classList.add("over")));
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault();
+    drop.classList.remove("over");
+    const f = e.dataTransfer?.files?.[0];
+    if (f) readExport(f);
+  });
+  const step = (n, title, text, extra = null) => h("li", { class: "gr-step" }, h("span", { class: "gr-n", text: String(n) }), h("div", {}, h("b", { text: title }), h("p", { text }), extra));
+  fill($("#import-body"),
+    h("p", { class: "gr-lede", text: "Three steps, a couple of minutes. Your reading history, ratings and dates come with you." }),
+    h(
+      "ol",
+      { class: "gr-steps" },
+      step(1, "OPEN GOODREADS IN A BROWSER", "The export lives on the website (not the Goodreads app). Sign in, then open My Books → Import and export.", h("a", { class: "gr-link", href: "https://www.goodreads.com/review/import", target: "_blank", rel: "noopener noreferrer", text: "OPEN GOODREADS EXPORT ↗" })),
+      step(2, "TAP “EXPORT LIBRARY”", "Goodreads prepares a file. Big libraries can take a few minutes; refresh that page until the download link appears."),
+      step(3, "PICK THE FILE HERE", "It's called goodreads_library_export.csv, usually in Downloads (or Files → Downloads on iPhone)."),
+    ),
+    drop,
+    error ? h("p", { class: "gr-error", role: "alert", text: error }) : null,
+    h("p", { class: "p-note", text: "🔒 THE FILE IS READ ON YOUR DEVICE AND NEVER UPLOADED." }),
+  );
+}
+
+async function readExport(fileObj) {
+  if (fileObj.size > 15 * 1024 * 1024) return showImportStart("That file is bigger than a Goodreads export should be (15 MB max).");
+  let parsed;
+  try {
+    parsed = fromGoodreads(await fileObj.text());
+  } catch (err) {
+    feel("error", "error");
+    return showImportStart(String(err.message || err));
+  }
+  const { books, counts } = parsed;
+  if (!books.length) return showImportStart("No books found in that file.");
+  feel("sparkle", "success");
+  let ratings = true;
+  const total = h("b", { class: "gr-total", "data-n": String(books.length), text: fmt(books.length) });
+  const stat = (n, label, cls) => h("span", { class: `gr-stat ${cls}` }, h("b", { text: fmt(n) }), h("small", { text: label }));
+  const already = books.filter((b) => state.books.some((x) => (b.isbn && x.isbn === b.isbn) || x.title.toLowerCase() === b.title.toLowerCase())).length;
+  const toggle = h("button", { type: "button", class: "gr-toggle on", "aria-pressed": "true", text: "✓ BRING MY STAR RATINGS (AS FEELINGS)" });
+  toggle.addEventListener("click", () => {
+    ratings = !ratings;
+    toggle.classList.toggle("on", ratings);
+    toggle.setAttribute("aria-pressed", String(ratings));
+    toggle.textContent = `${ratings ? "✓" : "○"} BRING MY STAR RATINGS (AS FEELINGS)`;
+    feel("snap", "select");
+  });
+  const go = key("BRING THEM IN", "k-lime wide", () => doImport(books, ratings), { sub: `${fmt(books.length - already)} BOOKS` });
+  fill($("#import-body"),
+    h("div", { class: "gr-found" }, h("small", { text: "FOUND IN YOUR EXPORT" }), total, h("span", { text: books.length === 1 ? "BOOK" : "BOOKS" })),
+    h("div", { class: "gr-stats" }, stat(counts.read, "READ", "read"), stat(counts.reading, "READING", "reading"), stat(counts.want, "WANT", "want")),
+    already ? h("p", { class: "p-note", text: `${already} ALREADY ON YOUR SHELVES WILL BE SKIPPED.` }) : null,
+    h("p", { class: "sync-text", text: "Read books keep their finish dates, so this year's count and your yearly goal are right straight away. Custom shelves land on Want. Covers come from Open Library by ISBN." }),
+    toggle,
+    h("div", { class: "keys one" }, go),
+  );
+  if (!prefersReducedMotion()) countUp(total);
+}
+
+function doImport(books, ratings) {
+  const input = ratings ? books : books.map((b) => ({ ...b, rating: 0 }));
+  const r = S.importBooks(state, input);
+  const ev = r.events.find((e) => e.type === "imported");
+  imp.close();
+  commit(r, deckEl);
+  if (!ev?.added) return island.say({ icon: "🤷", title: "NOTHING NEW", sub: "Every book was already on your shelves", tone: "sun" });
+  queuePoster({
+    kicker: `${fmt(ev.added)} BOOKS · ${fmt(ev.counts.read)} READ`,
+    lines: ["WELCOME", state.name ? `HOME, ${state.name.toUpperCase().slice(0, 10)}.` : "HOME."],
+    sub: ev.skipped ? `${ev.skipped} already here, skipped.` : "Your whole library, moved in.",
+    tone: "#ff6ad5",
+    ink: "#0d0d0d",
+    emoji: ["📚", "🧳", "🏠", "⭐"],
+    sounds: ["fanfare", "levelup"],
+  });
+  const where = ev.counts.reading ? "reading" : ev.counts.read ? "read" : "want";
+  setTimeout(() => (where !== shelf ? switchShelf(where) : renderShelf({ deal: 1 })), 300);
 }
 
 /* ---------------- sync ---------------- */
@@ -1205,6 +1388,9 @@ let added = [];
 const openAdd = () => add.open();
 
 function suggestions() {
+  return h("div", {}, suggestionChips(), h("button", { type: "button", class: "gr-cta", on: { click: () => openImport() } }, h("span", { text: "🧳" }), h("b", { text: "HAVE A GOODREADS LIBRARY?" }), h("small", { text: "IMPORT IT ALL AT ONCE →" })));
+}
+function suggestionChips() {
   const picks = ["Fourth Wing", "Project Hail Mary", "Normal People", "Atomic Habits", "The Hobbit", "Tomorrow, and Tomorrow"];
   return h("div", { class: "suggest" }, h("small", { class: "p-label", text: "TRY" }), h("div", { class: "chips" }, picks.map((p) => h("button", { type: "button", class: "chip", text: p, on: { click: () => (($("#q").value = p), runSearch()) } }))));
 }
@@ -1447,30 +1633,149 @@ if (sync.on) setTimeout(() => sync.now(), 400);
 
 /* ---------------- first run: the tutorial ---------------- */
 
+/* ---------------- first run: tour → name → bring your books ---------------- */
+
 const TOUR = "shelfie.tour";
-function tutorialDone() {
+const touring = () => !!document.querySelector(".tour");
+const popping = () => !!document.querySelector(".pop");
+
+function tutorialDone(finished) {
   try {
     localStorage.setItem(TOUR, "1");
   } catch {}
-  if (!state.seen) {
-    state = S.save(globalThis.localStorage, { ...state, seen: true });
-    setTimeout(() => island.say({ icon: "👋", title: "YOU'RE IN", sub: state.books.length ? "Swipe away" : "Add your first book: tap the + stamp", tone: "pink" }), 500);
+  const first = !state.toured;
+  if (first) state = S.save(globalThis.localStorage, { ...state, toured: true, seen: true });
+  sync.soon();
+  if (first) setTimeout(onboard, finished ? 900 : 300);
+}
+
+/** After the first tour: ask for a name, then offer Goodreads (or a sync code). */
+async function onboard() {
+  if (!state.name) await askName();
+  if (state.books.length < 3) await bringBooks();
+  setTimeout(introTips, 600);
+}
+
+async function askName({ edit = false } = {}) {
+  const res = await popup({
+    tone: "lime",
+    icon: "👋",
+    title: edit ? "WHAT SHOULD WE CALL YOU?" : "HEY, WHO'S READING?",
+    text: "Just a first name or a nickname, to make things friendlier. It stays on your device (and in your encrypted sync, if you turn it on).",
+    input: { placeholder: "Your name", max: 24, value: state.name, capitalize: "words", label: "Your first name or nickname" },
+    actions: [
+      { id: "skip", label: edit ? "CANCEL" : "SKIP", cancel: true },
+      { id: "ok", label: "THAT'S ME", primary: true },
+    ],
+  });
+  if (res.id !== "ok" || !S.cleanName(res.value)) {
+    if (!edit) island.say({ icon: "🕶️", title: "ANONYMOUS READER", sub: Q.goodbyeNoName(), tone: "violet" });
+    return;
+  }
+  commit(S.setName(state, res.value), $("#lcd"));
+  feel("levelup", "success");
+  rain({ count: 90, emoji: ["👋", "✨"] });
+  island.say({ icon: "👋", title: `HI, ${state.name.toUpperCase()}!`, sub: Q.hello(state.name), tone: "lime" });
+}
+
+async function bringBooks() {
+  const choice = await popup({
+    tone: "pink",
+    icon: "🧳",
+    title: "BRING YOUR BOOKS?",
+    text: "Coming from Goodreads? Import your whole library: what you've read (with dates and ratings), what you're reading, and your want-to-read. Using Shelfie on another device? Link it with your sync code.",
+    actions: [
+      { id: "later", label: "START FRESH", cancel: true },
+      { id: "sync", label: "SYNC CODE" },
+      { id: "gr", label: "GOODREADS", primary: true },
+    ],
+  });
+  if (choice === "gr") openImport();
+  if (choice === "sync") {
+    stats.open();
+    linking = true;
+    setTimeout(() => {
+      renderSyncTile();
+      $("#sync-tile")?.scrollIntoView({ block: "center", behavior: "smooth" });
+      $("#sync-code")?.focus();
+    }, 450);
   }
 }
-$("#help").addEventListener("click", () => {
+
+$("#help").addEventListener("click", async () => {
   feel("open", "light");
-  startTutorial({ onDone: tutorialDone });
+  const what = await popup({
+    tone: "yellow",
+    icon: "?",
+    title: "HOW CAN WE HELP?",
+    text: "Replay the gesture tour, or bring the explainer pop-ups back as you go.",
+    actions: [
+      { id: "tips", label: "POP-UPS AGAIN" },
+      { id: "tour", label: "PLAY THE TOUR", primary: true },
+    ],
+  });
+  if (what === "tour") startTutorial({ onDone: tutorialDone });
+  if (what === "tips") {
+    resetTips();
+    hints.reset?.();
+    introTips();
+  }
 });
-let toured = false;
+
+let toured = !!state.toured;
 try {
-  toured = !!localStorage.getItem(TOUR);
+  toured ||= !!localStorage.getItem(TOUR);
 } catch {}
 if (!toured) setTimeout(() => startTutorial({ onDone: tutorialDone }), 700);
+else if (sessionStorage.getItem("shelfie.fresh")) {
+  // Just reset: a clean slate, so say hello again.
+  sessionStorage.removeItem("shelfie.fresh");
+  setTimeout(() => {
+    island.say({ icon: "🧹", title: "FRESH START", sub: "Squeaky clean shelves", tone: "lime", buzz: false });
+    onboard();
+  }, 900);
+} else setTimeout(() => {
+  island.say({ icon: "📚", title: Q.greeting(state.name).toUpperCase(), sub: S.pagesOn(state) ? `${S.pagesOn(state)}/${state.goal} pages today` : "Ready when you are", tone: "lime", buzz: false });
+  introTips();
+}, 900);
+
+/* ---------------- explainer pop-ups ---------------- */
+
+holdTipsWhile(() => touring() || popping() || add.isOpen || deck.dragging || posterUp || !!document.querySelector(".tour"));
+
+/** The tips that make sense for what's on screen right now. Each shows once. */
+function introTips() {
+  if (stats.isOpen) return;
+  const b = book(topId);
+  if (b) tip({ id: "stamp", el: () => deck.top?.el, tone: "lime", title: "THIS IS A BOOK", text: b.shelf === "reading" ? "Drag it UP to turn pages (down to go back). Swipe sideways to flip through your books. Tap to flip the stamp over. Hold it to move it to another shelf." : "Swipe sideways to flip through. Tap to flip the stamp over. Hold it, then drop it on a shelf to move it." });
+  else tip({ id: "addstamp", el: () => deck.top?.el, tone: "lime", title: "YOUR FIRST BOOK", text: "This + stamp is always last on every shelf. Tap it (or pull it up) to search for a book." });
+  if (b?.shelf === "reading") tip({ id: "pad", el: () => $(".pad.reading"), tone: "cyan", title: "YOUR PAGE DECK", text: "Spin the dial, or tap +1 +5 +10 +25, to log pages. The green screen shows where you are and what's left." });
+  if (b?.shelf === "want") tip({ id: "padwant", el: () => $(".pad.want"), tone: "orange", title: "WANT TO READ", text: "START moves this book to Reading. 🎲 SHUFFLE picks one for you." });
+  if (b?.shelf === "read") tip({ id: "padread", el: () => $(".pad.read"), tone: "yellow", title: "FINISHED", text: "Tap a face to say how it felt. ↺ starts it again." });
+  tip({ id: "tape", el: () => $("#tape"), tone: "pink", title: "YOUR SHELVES", text: "Drag the big word sideways (or tap the next one) to switch between READING, WANT and READ." });
+  tip({ id: "lcd", el: () => $("#lcd"), tone: "lime", title: "STATUS SCREEN", text: "Level, XP, streak and your goals take turns here. Tap it for your stats." });
+  tip({ id: "pull", el: () => $("#pullbar"), tone: "cyan", title: "PULL ME UP", text: "Stats, daily / monthly / yearly goals, stickers, sync, Goodreads import and settings live down here." });
+}
+
+/* ---------------- visitors ---------------- */
+
+const critters = createCritters({
+  host: $("#stage"),
+  canShow: () => fx.visitors && !touring() && !popping() && !stats.isOpen && !add.isOpen && !imp.isOpen && !deck.dragging && !posterUp && !document.querySelector(".tip"),
+  name: () => state.name,
+  onPet: (c, el) => {
+    const r = S.findEgg(state, "app", `critter-${c.id}`);
+    r.events.forEach((e) => e.type === "egg" && (e.label = `Petted the ${c.id}`));
+    if (r.events.find((x) => x.type === "egg")?.fresh) commit(r, el);
+  },
+});
+
 // Hint that stats live below, once.
 if (!hints.has("stats")) setTimeout(() => !stats.isOpen && stats.peek(), 2600);
 
 // Exposed for the browser tests.
 globalThis.__shelfie = {
+  critters,
   get state() {
     return state;
   },

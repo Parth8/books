@@ -41,9 +41,19 @@ function fakeSync(store) {
   };
 }
 
-async function setup(page, { google = "ok", tour = false, store = new Map() } = {}) {
+const TIPS = ["stamp", "addstamp", "pad", "padwant", "padread", "tape", "lcd", "pull"];
+
+async function setup(page, { google = "ok", tour = false, tips = false, store = new Map() } = {}) {
   const cors = { "access-control-allow-origin": "*" };
   if (!tour) await page.addInitScript(() => localStorage.setItem("shelfie.tour", "1"));
+  // Explainer pop-ups and wandering animals would get in the way of the gestures under test.
+  await page.addInitScript(
+    ([tips, ids]) => {
+      if (!tips && !localStorage.getItem("shelfie.tips")) localStorage.setItem("shelfie.tips", JSON.stringify(ids));
+      if (!localStorage.getItem("shelfie.fx")) localStorage.setItem("shelfie.fx", JSON.stringify({ visitors: false }));
+    },
+    [tips, TIPS],
+  );
   await page.route(`${WORKER}/api/search*`, (r) =>
     google === "ok" ? r.fulfill({ contentType: "application/json", body: WORKER_GOOGLE, headers: cors }) : r.fulfill({ status: 503, contentType: "application/json", body: '{"error":"upstream_unavailable"}', headers: cors }),
   );
@@ -55,7 +65,7 @@ async function setup(page, { google = "ok", tour = false, store = new Map() } = 
   for (const host of ["https://books.google.com/**", "https://covers.openlibrary.org/**"]) await page.route(host, (r) => r.fulfill({ contentType: "image/png", body: COVER }));
 }
 
-async function run(name, fn, { motion = "reduce", google = "ok", allow = null, tour = false, raw = false } = {}) {
+async function run(name, fn, { motion = "reduce", google = "ok", allow = null, tour = false, tips = false, raw = false } = {}) {
   if (ONLY && !name.includes(ONLY)) return;
   if (raw) {
     // The test sets up its own browsers.
@@ -74,7 +84,7 @@ async function run(name, fn, { motion = "reduce", google = "ok", allow = null, t
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && !(allow && allow.test(m.text())) && errors.push(m.text()));
-  await setup(page, { google, tour });
+  await setup(page, { google, tour, tips });
   try {
     await page.goto(SITE);
     await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
@@ -431,11 +441,23 @@ await run("first launch: the tour teaches each gesture, and remembers it was see
   await page.click(".tour-btn.go");
   await page.waitForSelector(".tour", { state: "detached" });
   assert.equal(await page.evaluate(() => localStorage.getItem("shelfie.tour")), "1");
+  // Then it asks for a name (and only a name), and offers to bring books in.
+  await page.waitForSelector(".pop-input");
+  await page.fill(".pop-input", "  Ada <b>  ");
+  await page.click('.pop-btn[data-id="ok"]');
+  await page.waitForFunction(() => globalThis.__shelfie.state.name === "Ada b");
+  await page.waitForSelector('.pop-btn[data-id="gr"]');
+  await page.click('.pop-btn[data-id="later"]');
+  await page.waitForSelector(".pop", { state: "detached" });
+  assert.ok((await state(page)).toured);
   await page.reload();
   await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1500);
   assert.equal(await page.locator(".tour").count(), 0, "not shown again");
+  assert.equal(await page.locator(".pop").count(), 0, "no onboarding pop-ups again");
+  assert.match(await page.textContent("#lcd"), /HI ADA/);
   await page.click("#help");
+  await page.click('.pop-btn[data-id="tour"]');
   await page.waitForSelector(".tour");
   await page.click(".tour-skip");
   await page.waitForSelector(".tour", { state: "detached" });
@@ -540,9 +562,76 @@ await run("sound and haptics can be switched off, and stay off", async (page) =>
   await page.click('.key[aria-label="sound"]');
   await page.click('.key[aria-label="haptics"]');
   const fxp = await page.evaluate(() => JSON.parse(localStorage.getItem("shelfie.fx")));
-  assert.deepEqual(fxp, { sound: false, haptics: false });
+  assert.equal(fxp.sound, false);
+  assert.equal(fxp.haptics, false);
   assert.equal(await page.getAttribute('.key[aria-label="sound"]', "aria-pressed"), "false");
 });
+
+await run("reset asks twice, needs 'reset' typed, then wipes everything", async (page) => {
+  await starter(page);
+  await dismissPosters(page);
+  assert.ok((await state(page)).books.length > 0);
+  await page.click("#pullbar");
+  await page.click('.key[aria-label="Reset all data"]');
+  // "No" leaves everything alone.
+  await page.click('.pop-btn[data-id="no"]');
+  await page.waitForSelector(".pop", { state: "detached" });
+  assert.ok((await state(page)).books.length > 0);
+  await page.click('.key[aria-label="Reset all data"]');
+  await page.click('.pop-btn[data-id="yes"]');
+  await page.waitForSelector(".pop-card.is-danger");
+  assert.match(await page.textContent(".danger-text"), /gone for good/);
+  assert.ok(await page.isDisabled('.pop-btn[data-id="reset"]'), "can't delete until 'reset' is typed");
+  await page.fill(".pop-input", "rest");
+  assert.ok(await page.isDisabled('.pop-btn[data-id="reset"]'));
+  await page.fill(".pop-input", "RESET ");
+  await page.click('.pop-btn[data-id="reset"]');
+  await page.waitForEvent("load");
+  await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+  const s = await state(page);
+  assert.equal(s.books.length, 0);
+  assert.equal(s.xp, 0);
+  assert.ok(s.resetAt > 0);
+  // A clean slate says hello again (but doesn't replay the tour).
+  await page.waitForSelector(".pop-input");
+  assert.equal(await page.locator(".tour").count(), 0);
+});
+
+await run("import a Goodreads export: preview, then the books land on their shelves", async (page) => {
+  await page.click('.dock .key[aria-label="Import from Goodreads"]');
+  await page.waitForSelector("#panel-import .gr-drop");
+  assert.match(await page.textContent("#panel-import"), /Export Library/i);
+  // Not a Goodreads file: a friendly error.
+  await page.setInputFiles("#gr-file", { name: "x.csv", mimeType: "text/csv", buffer: Buffer.from("name,age\nbob,3\n") });
+  await page.waitForSelector(".gr-error");
+  await page.setInputFiles("#gr-file", new URL("./fixtures/goodreads.csv", import.meta.url).pathname);
+  await page.waitForSelector(".gr-found");
+  assert.equal((await page.textContent(".gr-total")).trim(), "4");
+  await page.click("#panel-import .key.k-lime");
+  await page.waitForFunction(() => globalThis.__shelfie.state.books.length === 4);
+  await dismissPosters(page);
+  const s = await state(page);
+  const by = Object.fromEntries(s.books.map((b) => [b.title, b]));
+  assert.equal(by["Dune (Dune, #1)"].shelf, "read");
+  assert.equal(by["Dune (Dune, #1)"].rating, 5);
+  assert.equal(by["Dune (Dune, #1)"].finished.slice(0, 7), "2023-05");
+  assert.equal(by["Atomic Habits"].shelf, "reading");
+  assert.equal(by["Fahrenheit 451"].shelf, "want");
+  assert.ok(s.eggs.includes("app:goodreads"));
+});
+
+await run("explainer pop-ups point at things once, then stay away", async (page) => {
+  await page.waitForSelector(".tip-bubble");
+  assert.match(await page.textContent(".tip-title"), /\w/);
+  for (let i = 0; i < 6 && (await page.locator(".tip").count()); i++) {
+    await page.click(".tip-btn");
+    await page.waitForTimeout(700);
+  }
+  await page.reload();
+  await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+  await page.waitForTimeout(1800);
+  assert.equal(await page.locator(".tip").count(), 0);
+}, { tips: true });
 
 await run(
   "full motion: starter, swipe, scrub, lift, posters, panels",
