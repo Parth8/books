@@ -4,6 +4,8 @@
 
 No account, no ads, no build step. Everything lives on your own device.
 
+**Live:** https://parth8.github.io/shelfie/
+
 ![Shelfie on a phone: turning pages, dropping a book on a shelf, rating a finished book, stats and search](screenshots/shelfie.jpg)
 
 ---
