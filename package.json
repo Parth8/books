@@ -1,0 +1,12 @@
+{
+  "name": "shelfie",
+  "private": true,
+  "type": "module",
+  "description": "Track the books you're reading, have read and want to read. No build step: plain HTML, CSS and ES modules.",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "e2e": "node tests/app.e2e.mjs",
+    "serve": "python3 -m http.server 8765",
+    "icons": "node tools/build-icons.mjs"
+  }
+}

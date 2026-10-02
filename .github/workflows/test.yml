@@ -1,0 +1,25 @@
+name: Tests
+on:
+  push:
+  pull_request:
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm i -g playwright@1.56.1 && npx playwright install --with-deps chromium
+      - run: |
+          python3 -m http.server 8765 &
+          sleep 1
+          NODE_PATH=$(npm root -g) node tests/app.e2e.mjs

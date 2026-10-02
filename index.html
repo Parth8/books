@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://covers.openlibrary.org https://archive.org https://*.archive.org; font-src 'self'; connect-src 'self' https://openlibrary.org; object-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
+  <meta name="referrer" content="no-referrer">
+
+  <title>Shelfie: your reading, levelled up</title>
+  <meta name="description" content="Track what you're reading, what you've read and what's next. Swipe, scroll, level up. No account, no ads.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Shelfie">
+  <meta property="og:title" content="Shelfie: your reading, levelled up">
+  <meta property="og:description" content="Track what you're reading, what you've read and what's next. Swipe, scroll, level up.">
+  <meta name="theme-color" content="#0b0a12">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="Shelfie">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="preload" href="fonts/jakarta.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <div class="bg" aria-hidden="true"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i><i class="grain"></i></div>
+
+  <main id="app">
+    <header class="top">
+      <div class="hello">
+        <p class="greet" id="greet">Hey bookworm</p>
+        <h1 class="logo" id="logo" tabindex="-1">shelfie<span class="dot">.</span></h1>
+      </div>
+      <div class="chips">
+        <button type="button" class="chip streak" id="streak" aria-label="Reading streak">
+          <span class="flame" aria-hidden="true">🔥</span><b id="streak-n">0</b>
+        </button>
+        <button type="button" class="chip level" id="level" aria-haspopup="dialog" aria-controls="sheet-me">
+          <svg class="lvl-ring" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15.5" class="trk"/><circle cx="18" cy="18" r="15.5" class="bar" id="lvl-bar"/></svg>
+          <b id="lvl-n">1</b>
+        </button>
+      </div>
+    </header>
+
+    <div class="xp" aria-hidden="true">
+      <span class="xp-title" id="xp-title">Fresh Spine</span>
+      <span class="xp-bar"><i id="xp-fill"></i></span>
+      <span class="xp-num" id="xp-num">0 / 100 XP</span>
+    </div>
+
+    <nav class="tabs" id="tabs" aria-label="Shelves"></nav>
+
+    <section class="carousel" aria-label="Books on this shelf">
+      <div class="track" id="track"></div>
+      <div class="dots" id="dots" aria-hidden="true"></div>
+    </section>
+
+    <div class="under" id="under"></div>
+
+    <section class="stats" aria-label="Today">
+      <button type="button" class="stat goal" id="goal" aria-haspopup="dialog" aria-controls="sheet-me">
+        <svg class="goal-ring" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" class="trk"/><circle cx="32" cy="32" r="27" class="bar" id="goal-bar"/></svg>
+        <span class="goal-in"><b id="goal-n">0</b><small id="goal-of">/ 20</small></span>
+        <span class="stat-label">pages today</span>
+      </button>
+      <div class="stat week">
+        <div class="bars" id="week" aria-hidden="true"></div>
+        <span class="stat-label" id="week-label">this week</span>
+      </div>
+      <div class="stat totals">
+        <b id="tot-books">0</b><span class="stat-label">books read</span>
+        <b id="tot-pages">0</b><span class="stat-label">pages total</span>
+      </div>
+    </section>
+
+    <section class="badges" aria-labelledby="badges-title">
+      <div class="row-head"><h2 id="badges-title">Badges</h2><button type="button" class="link" id="badges-all" aria-controls="sheet-me">See all</button></div>
+      <div class="badge-strip" id="badge-strip"></div>
+    </section>
+
+    <footer class="foot">
+      <p>Your shelves live on this device only. Book data from <a href="https://openlibrary.org" rel="noopener" target="_blank">Open Library</a>.</p>
+    </footer>
+  </main>
+
+  <!-- A book, up close -->
+  <dialog class="sheet" id="sheet-book" aria-labelledby="bk-title">
+    <div class="sheet-card">
+      <i class="grab" aria-hidden="true"></i>
+      <button type="button" class="x" data-close aria-label="Close">✕</button>
+      <div class="sheet-body" id="book-body"></div>
+    </div>
+  </dialog>
+
+  <!-- Add a book -->
+  <dialog class="sheet" id="sheet-add" aria-labelledby="add-title">
+    <div class="sheet-card">
+      <i class="grab" aria-hidden="true"></i>
+      <button type="button" class="x" data-close aria-label="Close">✕</button>
+      <div class="sheet-body">
+        <h2 class="sheet-title" id="add-title">Add a book</h2>
+        <div class="seg" id="add-shelf" role="radiogroup" aria-label="Add to"></div>
+        <label class="search">
+          <span aria-hidden="true">🔎</span>
+          <input id="q" type="search" placeholder="Title, author or ISBN" autocomplete="off" enterkeyhint="search" aria-label="Search books">
+        </label>
+        <div class="results" id="results" aria-live="polite"></div>
+        <details class="manual">
+          <summary>Can't find it? Add it yourself</summary>
+          <div class="manual-form">
+            <label>Title<input id="m-title" type="text" maxlength="140" autocomplete="off"></label>
+            <label>Author<input id="m-author" type="text" maxlength="100" autocomplete="off"></label>
+            <label>Pages<input id="m-pages" type="number" min="1" max="5000" inputmode="numeric" value="300"></label>
+            <button type="button" class="btn hot" id="m-add">Add to shelf</button>
+          </div>
+        </details>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Pick my next read -->
+  <dialog class="sheet tall" id="sheet-pick" aria-labelledby="pick-title">
+    <div class="sheet-card">
+      <i class="grab" aria-hidden="true"></i>
+      <button type="button" class="x" data-close aria-label="Close">✕</button>
+      <div class="sheet-body">
+        <h2 class="sheet-title" id="pick-title">What's next? 🎲</h2>
+        <div class="deck" id="deck" tabindex="0"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- You: level, badges, goal -->
+  <dialog class="sheet" id="sheet-me" aria-labelledby="me-title">
+    <div class="sheet-card">
+      <i class="grab" aria-hidden="true"></i>
+      <button type="button" class="x" data-close aria-label="Close">✕</button>
+      <div class="sheet-body" id="me-body"></div>
+    </div>
+  </dialog>
+</body>
+</html>
