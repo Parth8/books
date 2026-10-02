@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <!-- Google Books API key (a browser key, restricted to this site's address). Without one,
-       search still works through Open Library. -->
-  <meta name="google-books-key" content="AIzaSyBIAC83Q-QY-1KJDwO2HHHDrxMYah99zik">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://books.google.com https://books.googleusercontent.com https://covers.openlibrary.org https://archive.org https://*.archive.org; font-src 'self'; connect-src 'self' https://www.googleapis.com https://openlibrary.org; object-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
+  <!-- Shelfie's Worker (worker/worker.js). It holds the Google Books key; this page never does.
+       If you rename the Worker, change it here AND in connect-src below. -->
+  <meta name="api-base" content="https://shelf-api.8parthaggarwal1999.workers.dev">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://books.google.com https://books.googleusercontent.com https://covers.openlibrary.org https://archive.org https://*.archive.org; font-src 'self'; connect-src 'self' https://shelf-api.8parthaggarwal1999.workers.dev https://openlibrary.org; object-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
   <meta name="referrer" content="no-referrer">
 
   <title>Shelfie: read, swipe, level up</title>

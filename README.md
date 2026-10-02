@@ -54,22 +54,50 @@ Double-tap a cover. Some books have their own trick (Harry Potter, Dune, The Hob
 
 ---
 
-## Book search: Google Books
+## Book search: Google Books, through our own Worker
 
-Search uses the [Google Books API](https://developers.google.com/books/docs/overview). Covers come from Google at 480×720.
+Search uses the [Google Books API](https://developers.google.com/books/docs/overview), the same way Track uses its data sources: **the browser never sees a key.**
 
-**Add an API key.** Without one, Google refuses most requests (its shared anonymous quota is usually used up). It's free:
+```
+Browser (GitHub Pages: static HTML, CSS, ES modules)
+   │  GET /api/search?q=dune
+   ▼
+Cloudflare Worker (worker/worker.js) ── checks origin, rate-limits, validates, caches
+   ├── Google Books   (key held as a Worker secret, sent only to www.googleapis.com)
+   └── Open Library   (fallback when Google can't answer)
+```
 
-1. In the [Google Cloud console](https://console.cloud.google.com/), create a project and enable the **Books API**.
-2. Create an **API key** under Credentials, and restrict it to **HTTP referrers** (your site's address, for example `https://parth8.github.io/books/*`) and to the Books API.
-3. Put it in `index.html`:
-   ```html
-   <meta name="google-books-key" content="YOUR_KEY">
-   ```
+- The key lives only in the Worker, as a **Secret**. It is never in the page or this repository, and a test fails the build if anything shaped like a key is ever committed.
+- Every response and every log line from the Worker is checked: if a secret value ever ended up in one, it's blocked or redacted.
+- Only Shelfie's own site may call the Worker (origin allowlist), each visitor is rate-limited (30 searches a minute), and queries are validated (2 to 120 characters) before anything is sent upstream.
+- Answers are cached for 6 hours (a week as a fallback), so popular searches don't spend quota.
+- Covers load straight from `books.google.com`, which needs no key.
+- If the Worker can't be reached, the page searches Open Library directly (no key involved).
 
-A browser key is visible to anyone who opens the page; the referrer restriction is what keeps it yours.
+### Setting it up (Cloudflare dashboard, no CLI needed)
 
-If Google can't answer (no key, over quota, offline, nothing found), search **falls back to Open Library** automatically, and says which one answered under the results.
+1. **Google**: in the [Google Cloud console](https://console.cloud.google.com/), enable the **Books API** and create an API key. Under the key's restrictions, set **API restrictions → Restrict key → Books API** only. (Leave application restrictions as "None": calls come from Cloudflare's servers, not a browser.) Optionally set a daily quota cap on the Books API.
+2. **Worker**: Workers & Pages → Create → Hello World → name it **`shelf-api`** → Deploy. Then Edit code → paste `worker/worker.js` → Deploy.
+3. Settings → Variables and Secrets:
+
+| Name | Type | Value |
+|---|---|---|
+| `GOOGLE_BOOKS_KEY` | **Secret** | Your Google Books key |
+| `ALLOWED_ORIGINS` | Text | `https://parth8.github.io` (the domain only, no path) |
+| `REQUIRE_ORIGIN` | Text | `false` only while testing in a browser tab. Remove afterwards. |
+
+4. Check `https://shelf-api.<your-subdomain>.workers.dev/api/health` shows `{"ok":true,"google":true}`.
+5. If your Worker's address isn't `https://shelf-api.8parthaggarwal1999.workers.dev`, change it in **two** places at the top of `index.html`: the `api-base` meta tag and `connect-src` in the security policy.
+
+Optionally add a Rate Limiting binding named `LIMITER` for platform-level limits.
+
+## Security and privacy
+
+- **Strict Content Security Policy.** Scripts load only from this site. The page can connect only to its own Worker (and Open Library as the keyless fallback); images only from the two cover hosts.
+- **No untrusted HTML.** Book data is written with `textContent`; only cover addresses from Google Books or Open Library are stored or shown, and the page re-checks everything the Worker sends.
+- **Secrets stay server-side.** See above.
+- **Nothing about visitors is stored.** No accounts, cookies or analytics. Your shelves live in `localStorage` on your device. The Worker keeps no logs of who searched.
+- **No referrers to third parties.** Credentials are omitted from API calls.
 
 ---
 
@@ -94,11 +122,14 @@ js/
   hints.js            Gesture hints with a ghost finger
   eggs.js             Easter eggs
   confetti.js         Confetti on one canvas
-  search.js           Google Books, with Open Library as the fallback
+  search.js           Search through the Worker, Open Library if it can't be reached
   util.js             Safe DOM builder, seeded random
+worker/worker.js      The Cloudflare Worker: holds the Google key, searches, caches
 tests/
   store.test.mjs      Rules (node --test)
   search.test.mjs     Turning search answers into books
+  worker.test.mjs     The Worker: key handling, redaction, origin, rate limits, fallback
+  no-secrets.test.mjs Fails if anything shaped like a key is committed
   app.e2e.mjs         The whole app with real pointer gestures (Playwright, searches stubbed)
 tools/build-icons.mjs App icons from one SVG mark
 ```
@@ -115,7 +146,7 @@ Data is saved in `localStorage` under `shelf.v1` (back it up or restore it from 
 python3 -m http.server 8765   # then open http://localhost:8765
 ```
 
-To publish, turn on GitHub Pages for `main` (Settings → Pages → Deploy from a branch → `main`, `/ (root)`).
+Search goes through the Worker; set it up as above. To publish the site, turn on GitHub Pages for `main` (Settings → Pages → Deploy from a branch → `main`, `/ (root)`).
 
 ### Tests
 

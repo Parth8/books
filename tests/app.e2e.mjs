@@ -8,11 +8,13 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
+import { cleanGoogle } from "../worker/worker.js";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const SITE = process.env.SITE || "http://localhost:8765/";
-const GOOGLE = readFileSync(new URL("./fixtures/google-dune.json", import.meta.url), "utf8");
+// What the Worker answers when Google is up.
+const WORKER_GOOGLE = JSON.stringify({ source: "google", results: JSON.parse(readFileSync(new URL("./fixtures/google-dune.json", import.meta.url), "utf8")).items.map(cleanGoogle).filter(Boolean) });
 const OPEN_LIBRARY = readFileSync(new URL("./fixtures/search-dune.json", import.meta.url), "utf8");
 const COVER = readFileSync(new URL("../icons/icon-192.png", import.meta.url));
 const ONLY = process.env.ONLY || "";
@@ -28,9 +30,13 @@ async function run(name, fn, { motion = "reduce", google = "ok", allow = null } 
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && !(allow && allow.test(m.text())) && errors.push(m.text()));
   const cors = { "access-control-allow-origin": "*" };
-  await page.route("https://www.googleapis.com/books/v1/volumes*", (r) =>
-    google === "ok" ? r.fulfill({ contentType: "application/json", body: GOOGLE, headers: cors }) : r.fulfill({ status: 429, contentType: "application/json", body: '{"error":{"code":429}}', headers: cors }),
+  // Shelfie's Worker (the only place the Google key lives). "down" means it can't be reached.
+  await page.route("https://shelf-api.8parthaggarwal1999.workers.dev/api/search*", (r) =>
+    google === "ok" ? r.fulfill({ contentType: "application/json", body: WORKER_GOOGLE, headers: cors }) : r.fulfill({ status: 503, contentType: "application/json", body: '{"error":"upstream_unavailable"}', headers: cors }),
   );
+  await page.route("https://www.googleapis.com/**", () => {
+    throw new Error("the page must never call Google's API directly");
+  });
   await page.route("https://openlibrary.org/search.json*", (r) => r.fulfill({ contentType: "application/json", body: OPEN_LIBRARY, headers: cors }));
   for (const host of ["https://books.google.com/**", "https://covers.openlibrary.org/**"]) await page.route(host, (r) => r.fulfill({ contentType: "image/png", body: COVER }));
   try {
@@ -297,7 +303,7 @@ await run("search Google Books: tap adds to Want, swipe further for Reading", as
   await page.waitForFunction(() => globalThis.__shelfie.shelf === "reading" && globalThis.__shelfie.pile.length === 2);
 });
 
-await run("search falls back to Open Library when Google says no", async (page) => {
+await run("search falls back to Open Library when the Worker can't answer", async (page) => {
   await page.click('.dock .key:has-text("SEARCH")');
   await page.fill("#q", "dune");
   await page.waitForSelector(".row");
@@ -305,7 +311,7 @@ await run("search falls back to Open Library when Google says no", async (page) 
   await page.locator(".row").first().click();
   await page.waitForFunction(() => globalThis.__shelfie.state.books.length === 1);
   assert.equal((await state(page)).books[0].cover, 11481354);
-}, { google: "down", allow: /429/ });
+}, { google: "down", allow: /503/ });
 
 await run("pull the + stamp up to open search, and add a book by hand", async (page) => {
   const c = await center(topCard(page));

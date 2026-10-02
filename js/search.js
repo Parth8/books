@@ -1,27 +1,30 @@
-// Book search. Google Books first (put your API key in the google-books-key meta tag in
-// index.html), Open Library if Google says no (no key, over quota, offline, nothing found).
-// Only the fields the app shows are asked for, and every answer is checked before use.
+// Book search, through Shelfie's own Worker (worker/worker.js). The Worker holds the Google
+// Books key as a secret and falls back to Open Library itself, so this page never sees a key.
+//
+// If there's no Worker address in the api-base meta tag, or the Worker can't answer, search goes
+// straight to Open Library, which needs no key.
 
-const GOOGLE = "https://www.googleapis.com/books/v1/volumes";
-const GOOGLE_FIELDS = "items(id,volumeInfo(title,subtitle,authors,pageCount,publishedDate,imageLinks/thumbnail,categories,description))";
 const OPEN_LIBRARY = "https://openlibrary.org/search.json";
 const OL_FIELDS = "key,title,author_name,cover_i,number_of_pages_median,first_publish_year,subject";
 
 let ctl = null;
-const key = () => document.querySelector('meta[name="google-books-key"]')?.content.trim() || "";
+const apiBase = () => (document.querySelector('meta[name="api-base"]')?.content || "").trim().replace(/\/$/, "");
 
 /** { results, source: "google" | "openlibrary" } */
 export async function searchBooks(q, { limit = 16 } = {}) {
   ctl?.abort();
-  ctl = new AbortController();
-  const { signal } = ctl;
-  const timer = setTimeout(() => ctl.abort(), 9000);
+  const mine = (ctl = new AbortController());
+  const { signal } = mine;
+  const timer = setTimeout(() => mine.abort(), 12000);
   try {
-    try {
-      const results = await google(q, limit, signal);
-      if (results.length) return { results, source: "google" };
-    } catch (err) {
-      if (signal.aborted) throw err;
+    const base = apiBase();
+    if (base) {
+      try {
+        return await viaWorker(base, q, signal);
+      } catch (err) {
+        // Worker unreachable or unhappy: Open Library still answers, keylessly.
+        if (signal.aborted) throw err;
+      }
     }
     return { results: await openLibrary(q, limit, signal), source: "openlibrary" };
   } finally {
@@ -29,50 +32,56 @@ export async function searchBooks(q, { limit = 16 } = {}) {
   }
 }
 
-async function google(q, limit, signal) {
-  const params = new URLSearchParams({ q, maxResults: String(Math.min(40, limit)), printType: "books", fields: GOOGLE_FIELDS });
-  if (key()) params.set("key", key());
-  const res = await fetch(`${GOOGLE}?${params}`, { signal, referrerPolicy: "strict-origin-when-cross-origin" });
-  if (!res.ok) throw new Error(`Google Books ${res.status}`);
-  const data = await res.json();
-  return (Array.isArray(data?.items) ? data.items : []).map(cleanGoogle).filter(Boolean);
+async function viaWorker(base, q, signal) {
+  const res = await fetch(`${base}/api/search?${new URLSearchParams({ q })}`, { signal, credentials: "omit", referrerPolicy: "strict-origin" });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw Object.assign(new Error(data?.message || `Search failed (${res.status})`), { status: res.status });
+  // The Worker cleans its answers, but trust nothing that crosses the network.
+  const pick = data?.source === "google" ? cleanWorkerGoogle : cleanOpenLibraryResult;
+  return { results: (Array.isArray(data?.results) ? data.results : []).map(pick).filter(Boolean), source: data?.source === "google" ? "google" : "openlibrary" };
 }
 
 async function openLibrary(q, limit, signal) {
-  const res = await fetch(`${OPEN_LIBRARY}?${new URLSearchParams({ q, limit: String(limit), fields: OL_FIELDS })}`, { signal, referrerPolicy: "no-referrer" });
+  const res = await fetch(`${OPEN_LIBRARY}?${new URLSearchParams({ q, limit: String(limit), fields: OL_FIELDS })}`, { signal, credentials: "omit", referrerPolicy: "no-referrer" });
   if (!res.ok) throw new Error(`Open Library ${res.status}`);
   const data = await res.json();
   return (Array.isArray(data?.docs) ? data.docs : []).map(cleanOpenLibrary).filter(Boolean);
 }
 
 const str = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+const int = (v) => (Number.isInteger(v) && v > 0 ? v : null);
 
-export function cleanGoogle(item) {
-  const v = item?.volumeInfo;
-  if (!v || typeof v.title !== "string" || typeof item.id !== "string" || !/^[\w-]{4,20}$/.test(item.id)) return null;
-  const year = parseInt(str(v.publishedDate, 4), 10);
+/** A Google result as the Worker sent it. */
+export function cleanWorkerGoogle(r) {
+  if (!r || typeof r.title !== "string") return null;
   return {
-    key: `g:${item.id}`,
-    title: str(v.title, 140),
-    author: Array.isArray(v.authors) ? str(v.authors[0], 100) : "",
-    pages: Number.isInteger(v.pageCount) && v.pageCount > 0 ? v.pageCount : null,
-    year: Number.isInteger(year) && year > 0 ? year : null,
-    // A sharper cover than the API's thumbnail, from the same place.
-    img: v.imageLinks?.thumbnail ? `https://books.google.com/books/content?id=${item.id}&printsec=frontcover&img=1&zoom=1&fife=w480-h720&source=gbs_api` : null,
-    cats: Array.isArray(v.categories) ? str(v.categories[0], 40) : null,
-    blurb: str(v.description, 600).replace(/<[^>]*>/g, "").slice(0, 280) || null,
+    key: typeof r.key === "string" && /^g:[\w-]{4,20}$/.test(r.key) ? r.key : null,
+    title: str(r.title, 140),
+    author: str(r.author, 100),
+    pages: int(r.pages),
+    year: int(r.year),
+    img: typeof r.img === "string" && r.img.startsWith("https://books.google.com/books/content?") ? r.img.slice(0, 400) : null,
+    cats: str(r.cats, 40) || null,
+    blurb: str(r.blurb, 280) || null,
   };
 }
 
+/** An Open Library result as the Worker sent it. */
+export function cleanOpenLibraryResult(r) {
+  if (!r || typeof r.title !== "string") return null;
+  return { key: str(r.key, 40) || null, title: str(r.title, 140), author: str(r.author, 100), cover: int(r.cover), pages: int(r.pages), year: int(r.year), cats: str(r.cats, 40) || null };
+}
+
+/** A raw Open Library document (direct mode, before a Worker is set up). */
 export function cleanOpenLibrary(d) {
   if (!d || typeof d.title !== "string") return null;
   return {
-    key: typeof d.key === "string" ? d.key.replace("/works/", "ol:") : null,
+    key: typeof d.key === "string" ? d.key.replace("/works/", "ol:").slice(0, 40) : null,
     title: d.title.slice(0, 140),
-    author: Array.isArray(d.author_name) ? String(d.author_name[0] || "").slice(0, 100) : "",
-    cover: Number.isInteger(d.cover_i) && d.cover_i > 0 ? d.cover_i : null,
-    pages: Number.isInteger(d.number_of_pages_median) && d.number_of_pages_median > 0 ? d.number_of_pages_median : null,
+    author: Array.isArray(d.author_name) ? str(d.author_name[0], 100) : "",
+    cover: int(d.cover_i),
+    pages: int(d.number_of_pages_median),
     year: Number.isInteger(d.first_publish_year) ? d.first_publish_year : null,
-    cats: Array.isArray(d.subject) ? str(d.subject[0], 40) : null,
+    cats: Array.isArray(d.subject) ? str(d.subject[0], 40) || null : null,
   };
 }
