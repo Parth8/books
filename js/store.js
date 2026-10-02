@@ -37,11 +37,17 @@ export const BADGES = [
   { id: "owl", emoji: "🦉", name: "Night Owl", text: "Read between midnight and 4 AM", test: (s, now) => s._owl === dayKey(now) },
   { id: "eggs-3", emoji: "🥚", name: "Egg Hunter", text: "Found 3 easter eggs", test: (s) => s.eggs.length >= 3 },
   { id: "eggs-10", emoji: "🐣", name: "Egg Whisperer", text: "Found 10 easter eggs", test: (s) => s.eggs.length >= 10 },
+  { id: "month-goal", emoji: "🗓️", name: "Month Maestro", text: "Hit a monthly book goal", test: (s, now) => finishedIn(s, "month", now) >= s.goalMonth },
+  { id: "year-goal", emoji: "👑", name: "Year Legend", text: "Hit your yearly book goal", test: (s, now) => finishedIn(s, "year", now) >= s.goalYear },
 ];
 
 export function empty() {
-  return { v: 1, books: [], log: {}, xp: 0, goal: 20, badges: {}, eggs: [], seen: false };
+  // goal: pages a day. goalMonth and goalYear: books finished. gone: removed book ids, so a
+  // removal survives syncing with a copy that still has the book.
+  return { v: 1, books: [], log: {}, xp: 0, goal: 20, goalMonth: 2, goalYear: 24, goalsAt: 0, badges: {}, eggs: [], gone: {}, seen: false };
 }
+
+export const GOAL_LIMITS = { day: [5, 200], month: [1, 31], year: [1, 365] };
 
 /** Local calendar day, YYYY-MM-DD. */
 export function dayKey(now = new Date()) {
@@ -71,6 +77,22 @@ export function levelProgress(xp) {
 export const pagesOn = (s, now = new Date()) => s.log[dayKey(now)] || 0;
 export const totalPages = (s) => Object.values(s.log).reduce((a, b) => a + b, 0);
 export const finishedCount = (s) => s.books.filter((b) => b.shelf === "read").length;
+
+/** Books finished this calendar month or year (local time). */
+export function finishedIn(s, period, now = new Date()) {
+  const d = new Date(now);
+  return s.books.filter((b) => {
+    if (b.shelf !== "read" || !b.finished) return false;
+    const f = new Date(b.finished);
+    return f.getFullYear() === d.getFullYear() && (period === "year" || f.getMonth() === d.getMonth());
+  }).length;
+}
+
+/** Pages read this calendar month or year. */
+export function pagesIn(s, period, now = new Date()) {
+  const key = dayKey(now).slice(0, period === "year" ? 4 : 7);
+  return Object.entries(s.log).reduce((a, [k, v]) => (k.startsWith(key) ? a + v : a), 0);
+}
 export const shelf = (s, name) => s.books.filter((b) => b.shelf === name).sort((a, b) => (b.touched || 0) - (a.touched || 0));
 
 /** Days in a row with pages read, ending today (or yesterday, if today hasn't started yet). */
@@ -99,7 +121,7 @@ export function week(s, now = new Date()) {
 /* ---------------- changing the state ---------------- */
 
 function clone(s) {
-  return { ...s, books: s.books.map((b) => ({ ...b })), log: { ...s.log }, badges: { ...s.badges }, eggs: [...s.eggs] };
+  return { ...s, books: s.books.map((b) => ({ ...b })), log: { ...s.log }, badges: { ...s.badges }, eggs: [...s.eggs], gone: { ...(s.gone || {}) } };
 }
 
 /** XP, level-ups and new badges, shared by every change. */
@@ -112,6 +134,12 @@ function finish(before, s, events, now) {
   const s0 = streak(before, now);
   const s1 = streak(s, now);
   if (s1 > s0 && s1 >= 2) events.push({ type: "streak", days: s1 });
+  // Goals crossed by this change.
+  if (pagesOn(before, now) < s.goal && pagesOn(s, now) >= s.goal) events.push({ type: "goal", period: "day", target: s.goal });
+  for (const period of ["month", "year"]) {
+    const target = period === "month" ? s.goalMonth : s.goalYear;
+    if (finishedIn(before, period, now) < target && finishedIn(s, period, now) >= target) events.push({ type: "goal", period, target });
+  }
   for (const b of BADGES) {
     if (s.badges[b.id] || !b.test(s, now)) continue;
     s.badges[b.id] = now.toISOString();
@@ -224,13 +252,15 @@ export function rateBook(state, id, stars, now = new Date()) {
   if (!b) return { state, events: [] };
   const first = !b.rating;
   b.rating = clampInt(stars, 0, 5, 0);
+  b.touched = now.getTime();
   if (first && b.rating) s.xp += XP.rate;
   return finish(state, s, [], now);
 }
 
-export function removeBook(state, id) {
+export function removeBook(state, id, now = new Date()) {
   const s = clone(state);
   s.books = s.books.filter((b) => b.id !== id);
+  s.gone[id] = now.getTime();
   return { state: s, events: [{ type: "removed", id }] };
 }
 
@@ -244,30 +274,102 @@ export function findEgg(state, id, egg, now = new Date()) {
   return finish(state, s, [{ type: "egg", egg, fresh: true }], now);
 }
 
-export function setGoal(state, goal) {
-  return { state: { ...clone(state), goal: clampInt(goal, 1, 500, state.goal) }, events: [] };
+/** kind: "day" (pages), "month" or "year" (books). */
+export function setGoal(state, goal, kind = "day", now = new Date()) {
+  const field = { day: "goal", month: "goalMonth", year: "goalYear" }[kind];
+  if (!field) return { state, events: [] };
+  const [lo, hi] = GOAL_LIMITS[kind];
+  return { state: { ...clone(state), [field]: clampInt(goal, lo, hi, state[field]), goalsAt: now.getTime() }, events: [] };
+}
+
+/* ---------------- syncing ---------------- */
+
+/**
+ * Combine two copies of the shelves (this device and the synced one) without losing anything:
+ * each book keeps its most recently changed version, removals win over older copies, the
+ * reading log keeps the larger count for each day, and badges and eggs are pooled.
+ */
+export function merge(a, b) {
+  a = normalise(a);
+  b = normalise(b);
+  const gone = { ...a.gone };
+  for (const [id, t] of Object.entries(b.gone)) gone[id] = Math.max(gone[id] || 0, t);
+  const books = new Map();
+  for (const x of [...a.books, ...b.books]) {
+    const have = books.get(x.id);
+    if (!have) books.set(x.id, { ...x });
+    else {
+      const newer = (x.touched || 0) > (have.touched || 0) ? x : have;
+      books.set(x.id, { ...newer, best: Math.max(have.best || 0, x.best || 0) });
+    }
+  }
+  const kept = [...books.values()].filter((x) => !(gone[x.id] >= (x.touched || 0))).sort((x, y) => (x.id < y.id ? -1 : 1));
+  const log = { ...a.log };
+  for (const [k, v] of Object.entries(b.log)) log[k] = Math.max(log[k] || 0, v);
+  const badges = { ...b.badges };
+  for (const [k, v] of Object.entries(a.badges)) badges[k] = !badges[k] || v < badges[k] ? v : badges[k];
+  const goals = (b.goalsAt || 0) > (a.goalsAt || 0) ? b : a;
+  const sorted = (o) => Object.fromEntries(Object.entries(o).sort(([x], [y]) => (x < y ? -1 : 1)));
+  return {
+    ...empty(),
+    books: kept,
+    log: sorted(log),
+    xp: Math.max(a.xp, b.xp),
+    goal: goals.goal,
+    goalMonth: goals.goalMonth,
+    goalYear: goals.goalYear,
+    goalsAt: goals.goalsAt || 0,
+    badges: sorted(badges),
+    eggs: [...new Set([...a.eggs, ...b.eggs])].sort(),
+    gone: sorted(gone),
+    seen: a.seen || b.seen,
+    ...(a._owl || b._owl ? { _owl: [a._owl, b._owl].filter(Boolean).sort().pop() } : {}),
+  };
+}
+
+/** Fill in anything an older copy is missing. */
+export function normalise(data) {
+  if (!data || data.v !== 1 || !Array.isArray(data.books)) return empty();
+  const s = { ...empty(), ...data };
+  s.books = s.books.filter((b) => b && typeof b.id === "string" && typeof b.title === "string");
+  for (const k of ["log", "badges", "gone"]) if (!s[k] || typeof s[k] !== "object" || Array.isArray(s[k])) s[k] = {};
+  if (!Array.isArray(s.eggs)) s.eggs = [];
+  if (!Number.isFinite(s.xp)) s.xp = 0;
+  return s;
 }
 
 /* ---------------- saving ---------------- */
 
 export function load(storage) {
+  let raw = null;
   try {
-    const raw = storage?.getItem(KEY);
+    raw = storage?.getItem(KEY);
     if (!raw) return empty();
-    const data = JSON.parse(raw);
-    if (!data || data.v !== 1 || !Array.isArray(data.books)) return empty();
-    return { ...empty(), ...data };
+    return normalise(JSON.parse(raw));
   } catch {
+    // Never let a damaged copy be silently replaced: keep it aside first.
+    try {
+      if (raw) storage.setItem(`${KEY}.damaged.${Date.now()}`, raw);
+    } catch {}
     return empty();
   }
 }
 
+/**
+ * Save, without clobbering a copy another tab (or the installed app sharing this storage)
+ * wrote in the meantime: what's on disk is merged in first. Returns the state actually saved.
+ */
 export function save(storage, state) {
   try {
-    storage?.setItem(KEY, JSON.stringify(state));
-    return true;
+    const raw = storage?.getItem(KEY);
+    const merged = raw ? merge(JSON.parse(raw), state) : state;
+    storage?.setItem(KEY, JSON.stringify(merged));
+    return merged;
   } catch {
-    return false;
+    try {
+      storage?.setItem(KEY, JSON.stringify(state));
+    } catch {}
+    return state;
   }
 }
 

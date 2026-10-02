@@ -1,3 +1,5 @@
+import { haptic } from "./sfx.js";
+
 /**
  * DOM builder. All text goes through textContent, so a book title from a search can never
  * become HTML. Static, trusted SVG comes only from this app's own modules.
@@ -33,11 +35,9 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export const prefersReducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** A tiny tap on phones that support it. */
+/** A tiny tap on phones (Android vibration, iPhone's system tap). See sfx.js. */
 export function buzz(ms = 8) {
-  try {
-    if (navigator.userActivation?.hasBeenActive !== false) navigator.vibrate?.(ms);
-  } catch {}
+  haptic(ms);
 }
 
 /** Seeded random numbers (mulberry32): the same book always gets the same art. */

@@ -4,9 +4,16 @@
  * The Google Books key lives here, as a Worker secret, and nowhere else: not in the page, not
  * in this repository. The browser only ever talks to this Worker.
  *
- * Routes (GET only):
- *   /api/health
- *   /api/search?q=dune
+ * Routes:
+ *   GET /api/health
+ *   GET /api/search?q=dune
+ *   GET /api/sync/<id>     a synced copy of someone's shelves (end-to-end encrypted)
+ *   PUT /api/sync/<id>     store a new copy; { iv, ct, base } where base is the revision it
+ *                          was built on (a mismatch answers 409 with the current copy)
+ *
+ * Sync: the browser encrypts the shelves (AES-256-GCM) with a key derived from a sync code
+ * that never leaves the user's devices. <id> is a SHA-256 hash of that code. This Worker only
+ * stores and returns ciphertext; it cannot read it.
  *
  * Settings (Worker > Settings > Variables and Secrets):
  *   ALLOWED_ORIGINS    text    e.g. https://parth8.github.io   (comma separated, no path)
@@ -15,6 +22,7 @@
  *                              log line is checked so that no secret value can leave this Worker.
  *                              Without it, search answers from Open Library.
  *   REQUIRE_ORIGIN     text    optional, "false" lets you test in a browser tab
+ *   SYNC               KV namespace binding for synced shelves. Sync stays off without it.
  *   LIMITER            optional Rate Limiting binding (otherwise a per-isolate limiter is used)
  */
 
@@ -26,6 +34,7 @@ const LIMIT = 16;
 const TTL = { search: 21600, stale: 604800 }; // 6 hours fresh, a week as a fallback
 const RATE = { windowMs: 60_000, max: 30 };
 const UPSTREAM_TIMEOUT_MS = 8000;
+const SYNC = { maxBytes: 600_000, ttlSeconds: 400 * 86400 };
 
 class ApiError extends Error {
   constructor(status, code, message) {
@@ -51,12 +60,16 @@ export default {
     const cors = allowed.includes(origin) ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {};
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: { ...cors, "Access-Control-Allow-Methods": "GET", "Access-Control-Max-Age": "86400" } });
+      return new Response(null, {
+        status: 204,
+        headers: { ...cors, "Access-Control-Allow-Methods": "GET, PUT", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "86400" },
+      });
     }
 
     try {
-      if (request.method !== "GET") throw new ApiError(405, "method_not_allowed", "Only GET is supported.");
-      if (url.pathname === "/api/health") return reply({ ok: true, google: !!env.GOOGLE_BOOKS_KEY }, 200, cors, 0, env);
+      const syncId = /^\/api\/sync\/([0-9a-f]{64})$/.exec(url.pathname)?.[1];
+      if (request.method !== "GET" && !(request.method === "PUT" && syncId)) throw new ApiError(405, "method_not_allowed", "That method isn't supported here.");
+      if (url.pathname === "/api/health") return reply({ ok: true, google: !!env.GOOGLE_BOOKS_KEY, sync: !!env.SYNC }, 200, cors, 0, env);
 
       // Only our own site may use the key from a browser.
       const originOk = allowed.includes(origin) || (!origin && env.REQUIRE_ORIGIN === "false");
@@ -65,6 +78,10 @@ export default {
       await rateLimit(request, env);
 
       if (url.pathname === "/api/search") return reply(await searchRoute(url, env, ctx), 200, cors, 300, env);
+      if (syncId) {
+        const [status, body] = request.method === "PUT" ? await syncPut(syncId, request, env) : await syncGet(syncId, env);
+        return reply(body, status, cors, 0, env);
+      }
       throw new ApiError(404, "not_found", "Unknown route.");
     } catch (err) {
       const status = err instanceof ApiError ? err.status : 500;
@@ -148,6 +165,48 @@ async function rateLimit(request, env) {
   buckets.set(ip, b);
   if (buckets.size > 5000) buckets.clear();
   if (b.count > RATE.max) throw new ApiError(429, "rate_limited", "Too many searches. Try again in a minute.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Sync: stores ciphertext it can't read                               */
+/* ------------------------------------------------------------------ */
+
+function syncStore(env) {
+  if (!env.SYNC || typeof env.SYNC.get !== "function") throw new ApiError(503, "sync_not_configured", "Sync isn't switched on yet.");
+  return env.SYNC;
+}
+
+async function syncGet(id, env) {
+  const copy = await syncStore(env).get(`s:${id}`, "json");
+  // Nothing synced yet is a normal answer, not an error: revision 0, no copy.
+  if (!copy) return [200, { rev: 0 }];
+  return [200, { rev: copy.rev, iv: copy.iv, ct: copy.ct }];
+}
+
+const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+async function syncPut(id, request, env) {
+  const kv = syncStore(env);
+  if (!/^application\/json\b/.test(request.headers.get("Content-Type") || "")) throw new ApiError(415, "bad_type", "Send JSON.");
+  if (Number(request.headers.get("Content-Length") || 0) > SYNC.maxBytes) throw new ApiError(413, "too_large", "That's more than a shelf should hold.");
+  const text = await request.text();
+  if (text.length > SYNC.maxBytes) throw new ApiError(413, "too_large", "That's more than a shelf should hold.");
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new ApiError(400, "bad_body", "That isn't valid JSON.");
+  }
+  const { iv, ct, base } = body || {};
+  // A 12-byte AES-GCM nonce is 16 base64 characters; the ciphertext carries a 16-byte tag.
+  if (typeof iv !== "string" || iv.length !== 16 || !B64.test(iv)) throw new ApiError(400, "bad_body", "Missing or odd iv.");
+  if (typeof ct !== "string" || ct.length < 24 || !B64.test(ct)) throw new ApiError(400, "bad_body", "Missing or odd ct.");
+  if (!Number.isInteger(base) || base < 0) throw new ApiError(400, "bad_body", "Missing base revision.");
+  const current = await kv.get(`s:${id}`, "json");
+  if (current && current.rev !== base) return [409, { error: "conflict", message: "Changed elsewhere first.", rev: current.rev, iv: current.iv, ct: current.ct }];
+  const rev = (current?.rev || 0) + 1;
+  await kv.put(`s:${id}`, JSON.stringify({ rev, iv, ct, at: Date.now() }), { expirationTtl: SYNC.ttlSeconds });
+  return [200, { rev }];
 }
 
 /* ------------------------------------------------------------------ */

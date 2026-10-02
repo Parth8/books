@@ -138,7 +138,32 @@ p {
 .hud {
   padding: 0 12px;
 }
+.hud-row {
+  display: flex;
+  gap: 8px;
+}
+.help {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: var(--yellow);
+  color: var(--ink);
+  font: 900 22px/1 var(--display);
+  box-shadow: inset 0 -4px 0 #b99a00;
+  transition: transform 0.2s var(--bounce);
+}
+.help:active {
+  transform: translateY(3px);
+  box-shadow: inset 0 -1px 0 #b99a00;
+}
+.lcd.synced .led {
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+}
 .lcd {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   height: 40px;
   display: flex;
@@ -166,6 +191,7 @@ p {
 }
 .lcd-text {
   white-space: nowrap;
+  display: inline-block;
 }
 .lcd-xp {
   flex: 1;
@@ -1906,4 +1932,589 @@ body.party .stage {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+
+/* ============================================================
+   More juice
+   ============================================================ */
+.haptic-switch {
+  position: fixed;
+  left: -200px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.shockwave {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  border: 6px solid var(--lime);
+  background: transparent;
+  pointer-events: none;
+  z-index: 2500;
+  transform: translate(-50%, -50%);
+}
+.combo {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 14px 6px;
+  background: var(--lime);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  border-radius: 14px;
+  transform: rotate(-8deg);
+  pointer-events: none;
+}
+.combo b {
+  font: 900 40px/0.85 var(--display);
+  font-stretch: 62%;
+}
+.combo small {
+  font: 9px/1 var(--pixel);
+}
+.combo.hot {
+  background: var(--orange);
+}
+
+/* Goals */
+.p-note {
+  margin: -6px 4px 10px;
+  font: 9px/1 var(--pixel);
+  color: #8a8a8a;
+}
+.tile-dial {
+  flex-direction: column;
+  align-items: center;
+  touch-action: none;
+  cursor: grab;
+  outline-offset: -3px;
+}
+.dial-wrap {
+  position: relative;
+  width: 116px;
+  height: 116px;
+}
+.dial-wrap .dial-in {
+  position: absolute;
+  inset: 0;
+  top: 0;
+  height: auto;
+}
+.dial-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.dial-label {
+  font: 700 11px/1 var(--mono);
+  letter-spacing: 0.14em;
+}
+.t-dial-day { background: var(--night-2); }
+.t-dial-month { background: #2a1430; }
+.t-dial-month .arc { stroke: var(--pink); }
+.t-dial-year {
+  flex-direction: row;
+  justify-content: space-between;
+  background: #0f2733;
+  min-height: 160px;
+}
+.t-dial-year .arc { stroke: var(--cyan); }
+.t-dial-year .dial-side {
+  align-items: flex-end;
+  text-align: right;
+  flex: 1;
+}
+.t-dial-year .big {
+  font-size: 58px;
+  margin: 4px 0;
+}
+.tile-dial.done .arc {
+  stroke: var(--lime);
+  filter: drop-shadow(0 0 6px var(--lime));
+}
+
+/* Sync */
+.t-sync {
+  background: var(--paper);
+  color: var(--ink);
+  gap: 10px;
+}
+.sync-text {
+  font: 400 12px/1.45 var(--mono);
+}
+.sync-text.warn,
+.sync-status.warn {
+  color: #c4122f;
+}
+.sync-status {
+  font: 700 12px/1.2 var(--mono);
+  letter-spacing: 0.08em;
+}
+.sync-code {
+  padding: 14px 8px;
+  border-radius: 14px;
+  background: var(--lcd);
+  color: var(--lcd-ink);
+  font: min(3.2vw, 13px)/1.3 var(--pixel);
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-align: center;
+  word-break: break-all;
+  box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.7);
+  -webkit-user-select: all;
+  user-select: all;
+}
+.t-sync .lcd-input input {
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.keys.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+.key.toggle:not(.on) .cap {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.key.toggle.on .cap {
+  background: linear-gradient(180deg, #f6ff9e, var(--lime));
+  box-shadow: 0 6px 0 #9fb000, inset 0 2px 0 #fff;
+}
+.lg-or {
+  align-self: center;
+  font: 9px/1 var(--pixel);
+  color: #8a8a8a;
+}
+.legend {
+  flex-wrap: wrap;
+}
+.wb i {
+  animation: rise-bar 0.8s var(--spring) both;
+  animation-delay: calc(var(--i, 0) * 60ms + 200ms);
+  transform-origin: bottom;
+}
+@keyframes rise-bar {
+  from { transform: scaleY(0); }
+}
+
+/* ============================================================
+   The tour
+   ============================================================ */
+.tour {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: calc(14px + env(safe-area-inset-top)) 18px calc(18px + env(safe-area-inset-bottom));
+  border: 0;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--tone, var(--blue));
+  color: var(--ink, #fff);
+  transition: background 0.5s var(--ease), color 0.3s;
+  overflow: hidden;
+  outline: none;
+}
+.tour::before {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  opacity: 0.12;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.tour > * {
+  position: relative;
+  max-width: 520px;
+  width: 100%;
+  margin: 0 auto;
+}
+.tour-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.tour-dots {
+  display: flex;
+  gap: 6px;
+}
+.tour-dots i {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: currentColor;
+  opacity: 0.3;
+  transition: width 0.45s var(--spring), opacity 0.3s;
+}
+.tour-dots i.on {
+  width: 28px;
+  opacity: 1;
+}
+.tour-skip {
+  font: 700 11px/1 var(--mono);
+  letter-spacing: 0.14em;
+  padding: 10px 12px;
+  border-radius: 99px;
+  border: 2px solid currentColor;
+}
+.tour-kicker {
+  font: 700 11px/1 var(--mono);
+  letter-spacing: 0.2em;
+  opacity: 0.8;
+}
+.tour-title {
+  margin: 8px 0 8px;
+}
+.tour-title .tl {
+  display: block;
+  overflow: hidden;
+}
+.tour-title b {
+  display: block;
+  font: 900 min(19vw, 104px) / 0.84 var(--display);
+  font-stretch: 62%;
+  animation: slam 0.6s cubic-bezier(0.2, 1.4, 0.4, 1) calc(var(--k) * 90ms + 60ms) both;
+}
+.tour-text {
+  font: 400 14px/1.45 var(--mono);
+  max-width: 34em;
+}
+.tour-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+}
+.tour-try {
+  min-height: 34px;
+  text-align: center;
+  font: 12px/1 var(--pixel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tour-try:not(:empty) {
+  padding: 10px 14px;
+  border-radius: 99px;
+  background: var(--night);
+  color: var(--lime);
+  width: auto;
+  align-self: center;
+}
+.tour-try.done {
+  background: var(--lime);
+  color: var(--ink);
+  animation: pop-in 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+@keyframes pop-in {
+  from { transform: scale(0.6); }
+}
+.tour-nav {
+  display: flex;
+  gap: 10px;
+}
+.tour-btn {
+  flex: 1;
+  height: 58px;
+  border-radius: 18px;
+  font: 900 24px/1 var(--display);
+  font-stretch: 70%;
+  transition: transform 0.2s var(--bounce), box-shadow 0.2s;
+}
+.tour-btn.back {
+  flex: 0 0 34%;
+  border: 3px solid currentColor;
+}
+.tour-btn.go {
+  background: var(--night);
+  color: #fff;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.35);
+}
+.tour-btn.go.ready {
+  background: var(--lime);
+  color: var(--ink);
+  animation: nudge 1.2s ease-in-out infinite;
+}
+@keyframes nudge {
+  50% { box-shadow: 0 6px 0 rgba(0, 0, 0, 0.35), 0 0 0 8px rgba(231, 255, 61, 0.45); }
+}
+.tour-btn:active {
+  transform: translateY(4px);
+  box-shadow: none;
+}
+.tour-btn[hidden] {
+  display: none;
+}
+
+/* Practice stamps */
+.tt-pile {
+  position: relative;
+  width: min(46vw, 180px, 26dvh);
+  aspect-ratio: 0.72;
+  touch-action: none;
+  cursor: grab;
+}
+.tt-stamp {
+  position: absolute;
+  inset: 0;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.3));
+  transition: transform 0.5s var(--spring), opacity 0.3s;
+}
+.tt-pile.fan .tt-stamp:nth-child(1) { transform: translate(36px, 18px) rotate(12deg) scale(0.9); }
+.tt-pile.fan .tt-stamp:nth-child(2) { transform: translate(18px, 8px) rotate(6deg) scale(0.95); }
+.tt-pile.fan .tt-stamp:nth-child(4) { transform: rotate(-4deg); animation: bob 2.4s ease-in-out infinite; }
+@keyframes bob {
+  50% { transform: rotate(-4deg) translateY(-10px); }
+}
+.tt-paper {
+  --hole: 4px;
+  --step: 11px;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-mask:
+    radial-gradient(circle var(--hole) at calc(var(--step) / 2) calc(var(--step) / 2), #0000 98%, #000) calc(var(--step) / -2) calc(var(--step) / -2) / var(--step) var(--step) round,
+    linear-gradient(#000 0 0) center / calc(100% - var(--step)) calc(100% - var(--step)) no-repeat;
+  mask:
+    radial-gradient(circle var(--hole) at calc(var(--step) / 2) calc(var(--step) / 2), #0000 98%, #000) calc(var(--step) / -2) calc(var(--step) / -2) / var(--step) var(--step) round,
+    linear-gradient(#000 0 0) center / calc(100% - var(--step)) calc(100% - var(--step)) no-repeat;
+}
+.tt-num {
+  font: 900 30px/0.85 var(--display);
+  font-stretch: 62%;
+  min-height: 0.85em;
+}
+.tt-win {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+.tt-blob {
+  position: absolute;
+  left: 18%;
+  top: 18%;
+  width: 64%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--a);
+  animation: f-pulse 3s ease-in-out infinite;
+}
+.tt-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  background: var(--lime);
+  opacity: 0.9;
+  border-top: 3px solid #fff;
+  transition: height 0.2s var(--ease);
+}
+.tt-cap {
+  height: 10px;
+  width: 70%;
+  background: var(--ink);
+}
+.tt-stamp.plus .tt-paper {
+  background: var(--ink);
+  color: var(--lime);
+  align-items: center;
+  justify-content: center;
+}
+.tt-stamp.plus .tt-num {
+  font-size: 80px;
+}
+.tt-stamp.plus .tt-win,
+.tt-stamp.plus .tt-cap {
+  display: none;
+}
+
+/* The ghost finger shows each gesture */
+.tt-finger {
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  border: 3px solid var(--ink);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 50;
+}
+.tt-finger.swipe { animation: g-finger-swipe 2.2s ease-in-out infinite; }
+.tt-finger.up { animation: g-finger-up 2s ease-in-out infinite; }
+.tt-finger.hold { animation: g-finger-hold 2.6s ease-in-out infinite; }
+.tt-finger.spin { left: auto; right: 12%; top: 50%; animation: g-finger-spin 2.4s linear infinite; }
+@keyframes g-finger-swipe {
+  0%, 15% { transform: translateX(40px) scale(1); opacity: 0; }
+  25% { opacity: 1; transform: translateX(40px) scale(0.85); }
+  65% { transform: translateX(-90px) scale(0.85); opacity: 1; }
+  80%, 100% { transform: translateX(-110px) scale(1); opacity: 0; }
+}
+@keyframes g-finger-up {
+  0%, 10% { transform: translateY(60px); opacity: 0; }
+  20% { opacity: 1; transform: translateY(60px) scale(0.85); }
+  70% { transform: translateY(-70px) scale(0.85); opacity: 1; }
+  85%, 100% { transform: translateY(-80px); opacity: 0; }
+}
+@keyframes g-finger-hold {
+  0%, 10% { transform: scale(1.2); opacity: 0; }
+  20% { opacity: 1; transform: scale(0.85); }
+  45% { transform: scale(0.85); box-shadow: 0 0 0 14px rgba(231, 255, 61, 0.5); }
+  75% { transform: translateX(-110px) scale(0.85); opacity: 1; }
+  90%, 100% { transform: translateX(-110px); opacity: 0; }
+}
+@keyframes g-finger-spin {
+  from { transform: rotate(0deg) translateX(46px) rotate(0deg); }
+  to { transform: rotate(360deg) translateX(46px) rotate(-360deg); }
+}
+.tour-try.done ~ * .tt-finger,
+.tour:has(.tour-try.done) .tt-finger {
+  display: none;
+}
+
+.tt-dial {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border-radius: 26px;
+  background: linear-gradient(180deg, #f5f0e5, var(--cream));
+  box-shadow: inset 0 -6px 0 #d6cdb8, 0 12px 30px rgba(0, 0, 0, 0.25);
+}
+.tt-screen {
+  min-height: 60px;
+  padding: 12px;
+}
+.tt-count {
+  font: 16px/1 var(--pixel);
+}
+.tt-knob {
+  touch-action: none;
+}
+.tt-hold {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+}
+.tt-hold > .tt-stamp {
+  position: relative;
+  width: min(36vw, 140px, 22dvh);
+  aspect-ratio: 0.72;
+  inset: auto;
+  touch-action: none;
+  cursor: grab;
+  z-index: 5;
+}
+.tt-hold > .tt-stamp.lifted {
+  transition: none;
+  filter: drop-shadow(0 26px 26px rgba(0, 0, 0, 0.4));
+}
+.tt-zone {
+  position: absolute;
+  top: 18%;
+  bottom: 18%;
+  width: 66px;
+  display: grid;
+  place-items: center;
+  border: 3px dashed var(--ink);
+  border-radius: 18px;
+  writing-mode: vertical-rl;
+  font: 900 20px/1 var(--display);
+  font-stretch: 70%;
+  opacity: 0.35;
+  transition: opacity 0.2s, transform 0.4s var(--spring), background 0.2s;
+}
+.tt-zone.left { left: 0; transform: rotate(180deg); }
+.tt-zone.right { right: 0; }
+.tt-hold.lifting .tt-zone {
+  opacity: 1;
+  border-style: solid;
+  background: var(--paper);
+}
+.tt-zone.hot {
+  background: var(--lime) !important;
+}
+.tt-zone.right.hot { transform: scale(1.1); }
+.tt-zone.left.hot { transform: rotate(180deg) scale(1.1); }
+.tt-more {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  overflow: auto;
+  max-height: 100%;
+}
+.tt-more li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  animation: rise 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) calc(var(--k) * 70ms + 150ms) both;
+}
+.tt-more b {
+  display: block;
+  font: 900 18px/1 var(--display);
+  font-stretch: 70%;
+}
+.tt-more small {
+  font: 400 11px/1.3 var(--mono);
+}
+.tt-ico {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--ink);
+  color: var(--lime);
+  font-size: 18px;
+}
+@media (max-height: 700px) {
+  .tour-title b { font-size: min(15vw, 72px); }
+  .tour-text { font-size: 12px; }
 }

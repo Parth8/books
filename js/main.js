@@ -17,7 +17,10 @@ import { createPanel } from "./panel.js";
 import { createIsland } from "./island.js";
 import { poster } from "./poster.js";
 import { createHints } from "./hints.js";
-import { burst, rain, floatText } from "./confetti.js";
+import { burst, rain, floatText, pages as flutter, coins, shockwave, shake } from "./confetti.js";
+import { sound, haptic, feel, fx } from "./sfx.js";
+import { createSync, prettyCode } from "./sync.js";
+import { startTutorial } from "./tutorial.js";
 import { poke } from "./eggs.js";
 import { searchBooks } from "./search.js";
 import { Spring, Velocity, rubber, project } from "./physics.js";
@@ -53,12 +56,13 @@ const book = (id) => state.books.find((b) => b.id === id);
 function commit(result, at, { keepStats = false } = {}) {
   const before = state;
   state = result.state;
-  S.save(globalThis.localStorage, state);
+  state = S.save(globalThis.localStorage, state);
   const events = [...result.events];
-  if (S.pagesOn(before) < state.goal && S.pagesOn(state) >= state.goal) events.push({ type: "goal" });
   celebrate(events, at);
   renderHud();
   if (stats.isOpen && !keepStats) renderStats();
+  sync.soon();
+  void before;
   return result;
 }
 
@@ -72,12 +76,27 @@ function nextPoster() {
   const p = posters.shift();
   if (!p) return (posterUp = false);
   posterUp = true;
+  (p.sounds || ["fanfare"]).forEach((name, i) => setTimeout(() => sound(name), i * 380));
+  haptic("celebrate");
   poster({ ...p, onDone: () => setTimeout(nextPoster, 120) });
 }
 
+const MONTH = () => new Date().toLocaleDateString("en-GB", { month: "long" }).toUpperCase();
+let combo = { n: 0, t: 0 };
+
 function celebrate(events, at) {
   const xp = events.find((e) => e.type === "xp")?.amount || 0;
-  if (xp && at) floatText(at, `+${xp} XP`, "#e7ff3d");
+  if (xp && at) {
+    floatText(at, `+${xp} XP`, "#e7ff3d");
+    coins(at, Math.min(30, 6 + Math.round(xp / 4)));
+    sound("coin");
+  }
+  // Reading in bursts builds a combo: each log within 90 seconds of the last ramps it up.
+  if (events.some((e) => e.type === "xp") && events.some((e) => e.type === "xp" && e.amount > 0) && !events.some((e) => e.type === "added" || e.type === "egg" || e.type === "starter")) {
+    const now = Date.now();
+    combo = now - combo.t < 90000 ? { n: combo.n + 1, t: now } : { n: 1, t: now };
+    if (combo.n >= 2) showCombo(combo.n);
+  }
   const msgs = [];
   for (const e of events) {
     if (e.type === "starter") msgs.push({ icon: "📚", title: "STARTER STACK LOADED", sub: "Swipe through, drag a book up to read", tone: "pink" });
@@ -87,12 +106,20 @@ function celebrate(events, at) {
       msgs.push({ icon: { 25: "🌒", 50: "🌓", 75: "🌔" }[e.pct], title: `${e.pct}% THROUGH`, sub: e.book.title, tone: "lime" });
       burst(at || deckEl, { count: 50 + e.pct / 2 });
     }
-    if (e.type === "finished")
-      queuePoster({ kicker: "BOOK FINISHED", lines: ["DONE."], sub: e.book.title, tone: "#ffd60a", ink: "#0d0d0d", art: bookStamp({ ...e.book, shelf: "read", finished: new Date().toISOString() }), emoji: ["📚", "⭐", "🎉"] });
-    if (e.type === "goal") queuePoster({ kicker: `${state.goal} PAGES TODAY`, lines: ["GOAL", "SMASHED."], sub: "Daily goal done. Anything more is a bonus.", tone: "#ff5a1f", ink: "#0d0d0d", emoji: ["🎯", "🔥"] });
+    if (e.type === "finished") {
+      queuePoster({ kicker: "BOOK FINISHED", lines: ["DONE."], sub: e.book.title, tone: "#ffd60a", ink: "#0d0d0d", art: bookStamp({ ...e.book, shelf: "read", finished: new Date().toISOString() }), emoji: ["📚", "⭐", "🎉"], sounds: ["stamp", "fanfare"] });
+      shockwave(at || deckEl, "#ffd60a");
+      shake($("#stage"), 10);
+    }
+    if (e.type === "goal" && e.period === "day") queuePoster({ kicker: `${e.target} PAGES TODAY`, lines: ["GOAL", "SMASHED."], sub: "Daily goal done. Anything more is a bonus.", tone: "#ff5a1f", ink: "#0d0d0d", emoji: ["🎯", "🔥"], sounds: ["levelup"] });
+    if (e.type === "goal" && e.period === "month") queuePoster({ kicker: `${e.target} ${e.target === 1 ? "BOOK" : "BOOKS"} IN ${MONTH()}`, lines: ["MONTH", "CRUSHED."], sub: "Monthly goal done. Look at you.", tone: "#ff6ad5", ink: "#0d0d0d", emoji: ["🗓️", "💥", "📚"], sounds: ["fanfare"] });
+    if (e.type === "goal" && e.period === "year") queuePoster({ kicker: `${e.target} BOOKS IN ${new Date().getFullYear()}`, lines: ["YEAR", "GOAL.", "DONE."], sub: "You hit your reading goal for the whole year.", tone: "#25c7ff", ink: "#0d0d0d", emoji: ["👑", "🏆", "📚", "✨"], sounds: ["fanfare", "levelup"] });
     if (e.type === "streak") msgs.push({ icon: "🔥", title: `${e.days}-DAY STREAK`, sub: "Come back tomorrow to keep it", tone: "sun" });
-    if (e.type === "level") queuePoster({ kicker: `NOW A ${e.title.toUpperCase()}`, lines: ["LEVEL", `${String(e.level).padStart(2, "0")}.`], sub: "Keep turning pages.", tone: "#2b3bff", ink: "#ffffff", emoji: ["🆙", "⚡"] });
-    if (e.type === "badge") msgs.push({ icon: e.badge.emoji, title: `BADGE: ${e.badge.name.toUpperCase()}`, sub: e.badge.text, tone: "violet" });
+    if (e.type === "level") queuePoster({ kicker: `NOW A ${e.title.toUpperCase()}`, lines: ["LEVEL", `${String(e.level).padStart(2, "0")}.`], sub: "Keep turning pages.", tone: "#2b3bff", ink: "#ffffff", emoji: ["🆙", "⚡"], sounds: ["levelup"] });
+    if (e.type === "badge") {
+      msgs.push({ icon: e.badge.emoji, title: `BADGE: ${e.badge.name.toUpperCase()}`, sub: e.badge.text, tone: "violet" });
+      setTimeout(() => feel("sparkle", "success"), 400);
+    }
     if (e.type === "egg" && e.fresh) msgs.push({ icon: "🥚", title: `EGG: ${e.label.toUpperCase()}`, sub: "New easter egg found", tone: "pink" });
   }
   if (!msgs.length && xp) {
@@ -101,20 +128,54 @@ function celebrate(events, at) {
   }
   if (msgs.length && xp) Object.assign(msgs[0], { value: xp, unit: " XP" });
   for (const m of msgs) island.say(m);
+  if (events.some((e) => e.type === "milestone")) feel("levelup", "success");
+}
+
+/** "x3 COMBO" sticker that slaps onto the stage and fades. */
+function showCombo(n) {
+  sound("combo", n);
+  haptic(n >= 5 ? "celebrate" : "success");
+  const el = h("div", { class: `combo${n >= 5 ? " hot" : ""}`, "aria-hidden": "true" }, h("b", { text: `×${n}` }), h("small", { text: n >= 5 ? "ON FIRE" : "COMBO" }));
+  $("#stage").append(el);
+  burst(el, { count: 10 + n * 6, emoji: n >= 5 ? ["🔥"] : null });
+  const done = () => el.remove();
+  if (prefersReducedMotion()) return setTimeout(done, 1200);
+  el.animate([{ transform: "scale(3) rotate(-20deg)", opacity: 0 }, { transform: "scale(1) rotate(-8deg)", opacity: 1, offset: 0.25 }, { transform: "scale(1.06) rotate(-6deg)", opacity: 1, offset: 0.8 }, { transform: "scale(0.8) rotate(-8deg) translateY(-30px)", opacity: 0 }], { duration: 1500, easing: "cubic-bezier(.2,1.4,.4,1)" }).finished.then(done, done);
 }
 
 /* ============================================================
    HUD: the LCD and the shelf tape
    ============================================================ */
 
+// The LCD cycles through your level and goals.
+let lcdStep = 0;
+function lcdLines() {
+  const lp = S.levelProgress(state.xp);
+  const y = new Date().getFullYear();
+  const mon = new Date().toLocaleDateString("en-GB", { month: "short" }).toUpperCase();
+  return [
+    `LV${String(lp.level).padStart(2, "0")} · ${fmt(state.xp)} XP`,
+    `TODAY ${S.pagesOn(state)}/${state.goal} PG`,
+    `${mon} ${S.finishedIn(state, "month")}/${state.goalMonth} BOOKS`,
+    `${y} ${S.finishedIn(state, "year")}/${state.goalYear} BOOKS`,
+  ];
+}
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  lcdStep = (lcdStep + 1) % 4;
+  const el = $("#lcd-text");
+  el.textContent = lcdLines()[lcdStep];
+  if (!prefersReducedMotion()) el.animate([{ transform: "translateY(8px)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 260, easing: "steps(4)" });
+}, 3500);
+
 function renderHud() {
   const lp = S.levelProgress(state.xp);
-  $("#lcd-text").textContent = `LV${String(lp.level).padStart(2, "0")} · ${fmt(state.xp)} XP`;
+  $("#lcd-text").textContent = lcdLines()[lcdStep];
   $("#lcd-xp").style.width = `${(lp.frac * 100).toFixed(1)}%`;
   const st = S.streak(state);
   $("#lcd-streak").textContent = `🔥${st}`;
   $("#lcd").classList.toggle("lit", st > 0);
-  $("#lcd").setAttribute("aria-label", `Level ${lp.level}, ${state.xp} XP, ${st}-day streak. Open your stats`);
+  $("#lcd").setAttribute("aria-label", `Level ${lp.level}, ${state.xp} XP, ${st}-day streak, ${S.pagesOn(state)} of ${state.goal} pages today. Open your stats and goals`);
   for (const t of tapeItems) t.querySelector("sup").textContent = String(S.shelf(state, t.dataset.shelf).length).padStart(2, "0");
 }
 
@@ -229,7 +290,11 @@ function switchShelf(id, { velocity = 0 } = {}) {
   document.body.dataset.shelf = id;
   $("#stage-word").textContent = Array(6).fill(SHELF[id].label).join(" ");
   placeTape(true, velocity);
-  buzz(8);
+  feel("snap", "select");
+  // Cards being dealt onto the new shelf: a quick run of ticks.
+  const n = Math.min(6, S.shelf(state, id).length + 1);
+  for (let i = 0; i < n; i++) setTimeout(() => sound("tick"), 90 + i * 60);
+  setTimeout(() => sound("swoosh"), 40);
   renderShelf({ deal: dir });
 }
 
@@ -282,36 +347,59 @@ const deck = createDeck(deckEl, {
   onScrub: (id, dy, vy) => scrub(id, dy, vy),
   onScrubEnd: (id, vy) => endScrub(id, vy),
   onScrubKey: (id, n) => nudge(id, n),
-  onPull: (p) => deckEl.style.setProperty("--pull", String(p)),
+  onPull: (p) => {
+    deckEl.style.setProperty("--pull", String(p));
+    const step = Math.floor(p * 5);
+    if (step !== pullStep) {
+      pullStep = step;
+      if (step > 0) feel("pull", "tick", p);
+    }
+  },
   onPullUp: () => {
     hints.learn("pull");
+    feel("whoosh", "success");
+    burst(deckEl, { count: 30, colors: ["#e7ff3d", "#ffffff"] });
     openAdd();
   },
-  onTap: (id, el) => (id === "add" ? openAdd() : flip(el)),
+  onTap: (id, el) => (id === "add" ? (feel("open", "light"), openAdd()) : flip(el)),
   onDoubleTap: (id, el) => pokeBook(id, el),
   onLift: (id, on) => {
-    if (on) hints.learn("hold");
+    if (on) {
+      hints.learn("hold");
+      feel("pop", "heavy");
+    }
     showZones(on);
   },
   zones: () => [...document.querySelectorAll(".zone.on")].map((el) => ({ id: el.dataset.zone, el })),
-  onHover: (zid) => document.querySelectorAll(".zone").forEach((z) => z.classList.toggle("hot", z.dataset.zone === zid)),
-  onDrop: (id, zid) => dropTo(id, zid),
+  onHover: (zid) => {
+    if (zid) sound("snap");
+    document.querySelectorAll(".zone").forEach((z) => z.classList.toggle("hot", z.dataset.zone === zid));
+  },
+  onDrop: (id, zid) => {
+    feel(zid === "bin" ? "drop" : "thunk", zid === "bin" ? "warning" : "success");
+    shockwave(document.querySelector(`.zone[data-zone="${zid}"]`) || deckEl, zid === "bin" ? "#ff2b2b" : "#e7ff3d");
+    dropTo(id, zid);
+  },
   onDrag: (f) => {
     deckEl.style.setProperty("--drag", f.toFixed(3));
     liquid?.slosh(f * 0.15);
   },
   onFlick: (vx) => {
     hints.learn("swipe");
+    feel("swoosh", "light");
+    setTimeout(() => sound("thunk"), 160);
     setTimeout(() => liquid?.slosh(clamp(vx / 2500, -1, 1)), 30);
   },
   onEdge: (which) => {
+    feel("error", "warning");
     if (which === "end") island.say({ icon: "📮", title: "LAST ONE: THE + STAMP", sub: "Tap it or pull it up to add a book", tone: "pink", buzz: false });
   },
 });
+let pullStep = 0;
 
 function flip(el) {
   el.classList.toggle("flipped");
-  buzz(6);
+  feel("flip", "light");
 }
 
 let topId = null;
@@ -410,8 +498,15 @@ function setLive(b, page) {
   const p = clamp(page, 0, b.pages);
   if (!live || live.id !== b.id) live = { id: b.id, page: b.page, carry: 0 };
   if (p === live.page) return;
-  if (p === b.pages || p === 0) buzz(15);
-  else buzz(3);
+  if (p === b.pages || p === 0) feel("thunk", "medium");
+  else feel("page", "tick");
+  // A few pages flutter off the stamp as you read forwards.
+  if (p > live.page && Math.random() < 0.5) flutter(deck.top?.el.querySelector(".win") || deckEl, { count: 1 + Math.min(3, p - live.page) });
+  const crossed = [25, 50, 75].find((m) => (live.page / b.pages) * 100 < m && (p / b.pages) * 100 >= m);
+  if (crossed) {
+    feel("snap", "medium");
+    shockwave(deck.top?.el.querySelector(".denom") || deckEl, "#e7ff3d");
+  }
   live.page = p;
   clearTimeout(saveTimer);
   liquid?.level(p / b.pages);
@@ -461,16 +556,21 @@ function dropTo(id, zone) {
     const before = state;
     commit(S.removeBook(state, id));
     cache.delete(id);
-    island.say({ icon: "🗑️", title: "REMOVED", sub: `${b.title} · tap to undo`, tone: "pink", action: () => undo(before) });
+    island.say({ icon: "🗑️", title: "REMOVED", sub: `${b.title} · tap to undo`, tone: "pink", action: () => undo(id, before) });
   } else {
     commit(S.moveBook(state, id, zone), $(`.zone[data-zone="${zone}"]`));
   }
   setTimeout(() => renderShelf(), 260);
 }
 
-function undo(before) {
-  state = before;
-  S.save(globalThis.localStorage, state);
+function undo(id, before) {
+  const b = before.books.find((x) => x.id === id);
+  if (!b) return;
+  // Put the book back as a fresh change, so it outranks its removal everywhere it synced to.
+  const s = { ...state, books: [...state.books.filter((x) => x.id !== id), { ...b, touched: Date.now() }], gone: { ...state.gone } };
+  delete s.gone[id];
+  state = S.save(globalThis.localStorage, s);
+  sync.soon();
   renderShelf();
   island.say({ icon: "↩️", title: "BACK ON THE SHELF", tone: "lime", buzz: false });
 }
@@ -485,6 +585,7 @@ async function pokeBook(id, el) {
   el.classList.remove("flipped");
   const n = pokes.get(id) || 0;
   pokes.set(id, n + 1);
+  feel("sparkle", "celebrate");
   const res = await poke(b, el, n);
   const r = S.findEgg(state, id, res.egg);
   r.events.forEach((e) => e.type === "egg" && (e.label = res.label));
@@ -501,11 +602,20 @@ const dock = $("#dock");
 /** A chunky keycap. */
 function key(label, cls, onPress, { aria, sub } = {}) {
   const b = h("button", { type: "button", class: `key ${cls}`, "aria-label": aria || null }, h("span", { class: "cap" }, h("b", { text: label }), sub ? h("small", { text: sub }) : null));
+  b.addEventListener("pointerdown", () => feel("click", "medium"));
   b.addEventListener("click", (e) => {
-    buzz(8);
+    if (e.detail === 0) feel("click", "medium"); // keyboard press
+    sparkKey(b);
     onPress(e);
   });
   return b;
+}
+
+/** A keycap throws a few sparks when pressed. */
+function sparkKey(el) {
+  const colors = { "k-blue": ["#2b3bff", "#ffffff"], "k-yellow": ["#ffd60a", "#ffffff"], "k-red": ["#ff3b30", "#ffffff"] };
+  const c = Object.entries(colors).find(([k]) => el.classList.contains(k))?.[1] || ["#e7ff3d", "#ffffff"];
+  burst(el, { count: 10, colors: c, kinds: ["dot", "star"], power: 0.55 });
 }
 
 /** The little LCD: lines of pixel text that type themselves out. */
@@ -569,6 +679,7 @@ function renderDock() {
         const cur = book(topId);
         if (!cur) return;
         if (!live || live.id !== cur.id) live = { id: cur.id, page: cur.page, carry: 0 };
+        sound("detent");
         setLive(cur, live.page + n);
         liquid?.splash(n > 0 ? 0.25 : -0.15, 0.85);
       },
@@ -683,8 +794,10 @@ const stats = createPanel($("#panel-stats"), {
   handles: [$("#pullbar")],
   onOpen: () => {
     hints.learn("stats");
+    feel("open", "medium");
     renderStats();
   },
+  onClose: () => feel("close", "light"),
   onProgress: (p) => document.body.style.setProperty("--panel", p.toFixed(3)),
 });
 $("#pullbar").addEventListener("click", () => stats.open());
@@ -699,32 +812,45 @@ $("#panel-stats [data-close]").addEventListener("click", () => stats.close());
 
 function renderStats() {
   const lp = S.levelProgress(state.xp);
-  const today = S.pagesOn(state);
   const wk = S.week(state);
   const top = Math.max(state.goal, ...wk.map((d) => d.pages));
   const names = ["S", "M", "T", "W", "T", "F", "S"];
   const tile = (cls, ...kids) => h("div", { class: `tile ${cls}` }, ...kids);
-  const dial = goalDial(today);
+  const num = (n, cls = "big") => h("b", { class: cls, "data-n": String(n), text: fmt(n) });
+  const year = new Date().getFullYear();
   $("#stats-body").replaceChildren(
     h(
       "div",
       { class: "bento" },
-      tile("t-level span2", h("small", { text: "LEVEL" }), h("b", { class: "huge", text: String(lp.level).padStart(2, "0") }), h("span", { class: "t-title", text: lp.title.toUpperCase() }), h("span", { class: "t-bar" }, h("i", { vars: { width: `${(lp.frac * 100).toFixed(1)}%` } })), h("small", { class: "t-foot", text: `${fmt(lp.into)} / ${fmt(lp.need)} XP TO LV${lp.level + 1}` })),
-      tile("t-streak", h("small", { text: "STREAK" }), h("b", { class: "big", text: String(S.streak(state)).padStart(2, "0") }), h("span", { class: "t-foot", text: "🔥 DAYS IN A ROW" })),
-      dial,
+      tile("t-level span2", h("small", { text: "LEVEL" }), h("b", { class: "huge", "data-n": String(lp.level), "data-pad": "2", text: String(lp.level).padStart(2, "0") }), h("span", { class: "t-title", text: lp.title.toUpperCase() }), h("span", { class: "t-bar" }, h("i", { vars: { width: `${(lp.frac * 100).toFixed(1)}%` } })), h("small", { class: "t-foot", text: `${fmt(lp.into)} / ${fmt(lp.need)} XP TO LV${lp.level + 1}` })),
+    ),
+    h("h3", { class: "p-h", text: "GOALS" }),
+    h("p", { class: "p-note", text: "SPIN A RING TO SET THE GOAL" }),
+    h(
+      "div",
+      { class: "bento" },
+      goalDial({ kind: "day", label: "TODAY", unit: "PAGES", value: S.pagesOn(state), target: state.goal, cls: "t-dial-day" }),
+      goalDial({ kind: "month", label: new Date().toLocaleDateString("en-GB", { month: "long" }).toUpperCase(), unit: "BOOKS", value: S.finishedIn(state, "month"), target: state.goalMonth, cls: "t-dial-month" }),
+      goalDial({ kind: "year", label: String(year), unit: "BOOKS", value: S.finishedIn(state, "year"), target: state.goalYear, cls: "t-dial-year span2", wide: true }),
+    ),
+    h("h3", { class: "p-h", text: "NUMBERS" }),
+    h(
+      "div",
+      { class: "bento" },
+      tile("t-streak", h("small", { text: "STREAK" }), num(S.streak(state)), h("span", { class: "t-foot", text: "🔥 DAYS IN A ROW" })),
+      tile("t-books", h("small", { text: "BOOKS READ" }), num(S.finishedCount(state)), h("span", { class: "t-foot", text: "ALL TIME" })),
       tile(
         "t-week span2",
         h("small", { text: `THIS WEEK · ${fmt(wk.reduce((a, d) => a + d.pages, 0))} PAGES` }),
         h(
           "div",
           { class: "wbars" },
-          wk.map((d, i) => h("span", { class: `wb${d.pages >= state.goal ? " hit" : ""}${i === 6 ? " today" : ""}`, vars: { "--h": `${Math.max(4, (d.pages / top) * 100)}%` } }, h("i"), h("small", { text: names[new Date(`${d.day}T12:00`).getDay()] }))),
+          wk.map((d, i) => h("span", { class: `wb${d.pages >= state.goal ? " hit" : ""}${i === 6 ? " today" : ""}`, vars: { "--h": `${Math.max(4, (d.pages / top) * 100)}%`, "--i": i } }, h("i"), h("small", { text: names[new Date(`${d.day}T12:00`).getDay()] }))),
         ),
       ),
-      tile("t-books", h("small", { text: "BOOKS READ" }), h("b", { class: "big", text: String(S.finishedCount(state)).padStart(2, "0") })),
-      tile("t-pages", h("small", { text: "PAGES READ" }), h("b", { class: "big", text: fmt(S.totalPages(state)) })),
-      tile("t-eggs", h("small", { text: "EASTER EGGS" }), h("b", { class: "big", text: `🥚${state.eggs.length}` })),
-      tile("t-xp", h("small", { text: "TOTAL XP" }), h("b", { class: "big", text: fmt(state.xp) })),
+      tile("t-pages", h("small", { text: "PAGES READ" }), num(S.totalPages(state)), h("span", { class: "t-foot", text: `${fmt(S.pagesIn(state, "month"))} THIS MONTH` })),
+      tile("t-xp", h("small", { text: "TOTAL XP" }), num(state.xp)),
+      tile("t-eggs span2", h("small", { text: "EASTER EGGS FOUND" }), num(state.eggs.length), h("span", { class: "t-foot", text: "DOUBLE-TAP COVERS. TAP THE SCREEN UP TOP 5×. KONAMI." })),
     ),
     h("h3", { class: "p-h", text: `BADGES ${Object.keys(state.badges).length}/${S.BADGES.length}` }),
     h(
@@ -735,23 +861,71 @@ function renderStats() {
         return h("div", { class: `mini${got ? " got" : ""}`, title: b.text }, h("div", { class: "mini-paper" }, h("span", { class: "mini-e", text: got ? b.emoji : "?" }), h("b", { text: b.name.toUpperCase() }), h("small", { text: b.text })));
       }),
     ),
+    h("h3", { class: "p-h", text: "SYNC & BACKUP" }),
+    syncTile(),
     h(
       "div",
       { class: "keys two p-actions" },
-      key("⬇", "k-cream", exportData, { sub: "BACK UP" }),
+      key("⬇", "k-cream", exportData, { sub: "BACK UP FILE" }),
       (() => {
-        const k = key("⬆", "k-cream", () => k.querySelector("input").click(), { sub: "RESTORE" });
+        const k = key("⬆", "k-cream", () => k.querySelector("input").click(), { sub: "RESTORE FILE" });
         k.append(h("input", { type: "file", accept: "application/json,.json", hidden: true, on: { change: importData } }));
         return k;
       })(),
     ),
+    h("h3", { class: "p-h", text: "SETTINGS" }),
+    h(
+      "div",
+      { class: "keys three p-actions" },
+      toggleKey("🔊", "SOUND", "sound"),
+      toggleKey("📳", "HAPTICS", "haptics"),
+      key("?", "k-yellow", () => {
+        stats.close();
+        setTimeout(() => startTutorial({ onDone: tutorialDone }), 350);
+      }, { sub: "HOW TO USE", aria: "How to use Shelfie" }),
+    ),
   );
-  if (!prefersReducedMotion())
-    [...$("#stats-body .bento").children].forEach((t, i) => t.animate([{ transform: "translateY(24px) scale(.94)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: 40 * i, easing: "cubic-bezier(.2,1.3,.4,1)", fill: "backwards" }));
+  if (!prefersReducedMotion()) {
+    [...$("#stats-body").querySelectorAll(".tile, .mini")].forEach((t, i) => t.animate([{ transform: "translateY(24px) scale(.94)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: Math.min(600, 35 * i), easing: "cubic-bezier(.2,1.3,.4,1)", fill: "backwards" }));
+    $("#stats-body").querySelectorAll("[data-n]").forEach((el) => countUp(el));
+  }
 }
 
-/** Today's ring, watch-face style. Drag round the ring to set your daily goal. */
-function goalDial(today) {
+/** Numbers roll up from zero when the stats open. */
+function countUp(el) {
+  const to = Number(el.dataset.n);
+  const pad = Number(el.dataset.pad || 0);
+  if (!Number.isFinite(to) || to <= 0) return;
+  const t0 = performance.now();
+  const dur = 700 + Math.min(600, to * 3);
+  const step = (t) => {
+    const k = Math.min(1, Math.max(0, (t - t0) / dur));
+    const v = Math.round(to * (1 - Math.pow(1 - k, 4)));
+    el.textContent = pad ? String(v).padStart(pad, "0") : fmt(v);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function toggleKey(emoji, label, pref) {
+  const k = key(emoji, `k-cream toggle${fx[pref] ? " on" : ""}`, () => {
+    fx.set(pref, !fx[pref]);
+    k.classList.toggle("on", fx[pref]);
+    k.setAttribute("aria-pressed", String(fx[pref]));
+    k.querySelector("small").textContent = `${label} ${fx[pref] ? "ON" : "OFF"}`;
+    if (fx[pref]) feel("pop", "success");
+  }, { sub: `${label} ${fx[pref] ? "ON" : "OFF"}`, aria: label.toLowerCase() });
+  k.setAttribute("aria-pressed", String(fx[pref]));
+  return k;
+}
+
+/**
+ * A goal ring, watch-face style: the arc is your progress, the handle is the goal. Drag the
+ * ring round (or use the arrow keys) to set it.
+ */
+function goalDial({ kind, label, unit, value, target, cls, wide = false }) {
+  const [lo, hi] = S.GOAL_LIMITS[kind];
+  const step = kind === "day" ? 5 : 1;
   const R = 46;
   const C = 2 * Math.PI * R;
   const NS = "http://www.w3.org/2000/svg";
@@ -766,19 +940,30 @@ function goalDial(today) {
   const arc = mk("circle", { cx: 60, cy: 60, r: R, class: "arc", "stroke-dasharray": C, transform: "rotate(-90 60 60)" });
   const handle = mk("circle", { cx: 60, cy: 60 - R, r: 7, class: "handle" });
   svgEl.append(arc, handle);
-  const num = h("b", { class: "dial-n", text: String(today) });
+  const num = h("b", { class: "dial-n", text: String(value) });
   const of = h("small", { class: "dial-of" });
-  const el = h("div", { class: "tile t-dial tile-dial", role: "slider", tabIndex: 0, "aria-label": "Daily page goal", "aria-valuemin": "5", "aria-valuemax": "200" }, svgEl, h("span", { class: "dial-in" }, num, of), h("small", { class: "t-foot", text: "TODAY · SPIN TO SET GOAL" }));
-  let goal = state.goal;
+  const foot = h("small", { class: "t-foot" });
+  const el = h(
+    "div",
+    { class: `tile t-dial tile-dial ${cls}`, role: "slider", tabIndex: 0, "aria-label": `${label} goal, ${unit.toLowerCase()}`, "aria-valuemin": String(lo), "aria-valuemax": String(hi), "data-kind": kind },
+    h("div", { class: "dial-wrap" }, svgEl, h("span", { class: "dial-in" }, num, of)),
+    h("div", { class: "dial-side" }, h("small", { class: "dial-label", text: label }), wide ? h("b", { class: "big", text: `${value}/${target}` }) : null, foot),
+  );
+  let goal = target;
   const paint = () => {
-    const frac = Math.min(1, today / goal);
+    const frac = Math.min(1, value / goal);
     arc.style.strokeDashoffset = String(C * (1 - frac));
-    const a = (goal / 200) * 2 * Math.PI;
+    const a = ((goal - lo) / (hi - lo)) * 2 * Math.PI * 0.97;
     handle.setAttribute("cx", String(60 + Math.sin(a) * R));
     handle.setAttribute("cy", String(60 - Math.cos(a) * R));
     of.textContent = `/ ${goal}`;
+    const left = Math.max(0, goal - value);
+    const u = left === 1 ? unit.replace(/S$/, "") : unit;
+    foot.textContent = left ? `${left} ${u} TO GO` : `GOAL DONE ✓`;
+    if (wide) el.querySelector(".big").textContent = `${value}/${goal}`;
     el.setAttribute("aria-valuenow", String(goal));
-    el.classList.toggle("done", today >= goal);
+    el.setAttribute("aria-valuetext", `${value} of ${goal} ${unit.toLowerCase()}`);
+    el.classList.toggle("done", value >= goal);
   };
   paint();
   let d = null;
@@ -786,20 +971,28 @@ function goalDial(today) {
     const r = svgEl.getBoundingClientRect();
     let a = Math.atan2(e.clientX - (r.left + r.width / 2), -(e.clientY - (r.top + r.height / 2)));
     if (a < 0) a += 2 * Math.PI;
-    return clamp(Math.round(((a / (2 * Math.PI)) * 200) / 5) * 5, 5, 200);
+    const raw = lo + (a / (2 * Math.PI * 0.97)) * (hi - lo);
+    return clamp(Math.round(raw / step) * step, lo, hi);
+  };
+  const save = () => {
+    if (goal === { day: state.goal, month: state.goalMonth, year: state.goalYear }[kind]) return;
+    commit(S.setGoal(state, goal, kind), null, { keepStats: true });
+    feel("snap", "success");
+    island.say({ icon: "🎯", title: `${label} GOAL: ${goal} ${unit}`, tone: "lime", buzz: false });
   };
   el.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     d = e.pointerId;
     el.setPointerCapture(d);
     el.classList.add("grab");
+    feel("pop", "light");
   });
   el.addEventListener("pointermove", (e) => {
     if (d !== e.pointerId) return;
     const g = at(e);
     if (g !== goal) {
       goal = g;
-      buzz(3);
+      feel("detent", "tick");
       paint();
     }
   });
@@ -807,22 +1000,147 @@ function goalDial(today) {
     if (d !== e.pointerId) return;
     d = null;
     el.classList.remove("grab");
-    if (goal !== state.goal) {
-      commit(S.setGoal(state, goal), null, { keepStats: true });
-      island.say({ icon: "🎯", title: `GOAL: ${goal} PAGES A DAY`, tone: "lime", buzz: false });
-    }
+    save();
   };
   el.addEventListener("pointerup", up);
   el.addEventListener("pointercancel", up);
   el.addEventListener("keydown", (e) => {
-    const step = { ArrowUp: 5, ArrowRight: 5, ArrowDown: -5, ArrowLeft: -5 }[e.key];
-    if (!step) return;
+    const k = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step }[e.key];
+    if (!k) return;
     e.preventDefault();
-    goal = clamp(goal + step, 5, 200);
+    goal = clamp(goal + k, lo, hi);
+    feel("detent", "tick");
     paint();
-    commit(S.setGoal(state, goal), null, { keepStats: true });
+    save();
   });
   return el;
+}
+
+/* ---------------- sync ---------------- */
+
+const apiBase = (document.querySelector('meta[name="api-base"]')?.content || "").trim().replace(/\/$/, "");
+let linking = false;
+let revealCode = false;
+
+const sync = createSync({
+  base: apiBase,
+  get: () => state,
+  put: (next) => applyIncoming(next),
+  merge: S.merge,
+  onStatus: () => {
+    if (stats.isOpen) $("#sync-tile")?.replaceWith(syncTile());
+    $("#lcd").classList.toggle("synced", sync.on && sync.status.state === "idle");
+  },
+});
+
+/** A copy arrived (another tab, or sync): fold it in and redraw if anything changed. */
+function applyIncoming(next) {
+  const merged = S.merge(state, next);
+  if (JSON.stringify(merged) === JSON.stringify(S.merge(state, state))) return;
+  const wasEmpty = !S.shelf(state, shelf).length;
+  state = S.save(globalThis.localStorage, merged);
+  renderHud();
+  if (deck.dragging || live) return;
+  // Books arriving on an empty shelf get dealt in, so you see them straight away.
+  if (wasEmpty && S.shelf(state, shelf).length) renderShelf({ deal: 1 });
+  else renderShelf();
+}
+
+const ago = (t) => {
+  if (!t) return "NOT YET";
+  const s = Math.round((Date.now() - t) / 1000);
+  if (s < 45) return "JUST NOW";
+  if (s < 3600) return `${Math.round(s / 60)} MIN AGO`;
+  if (s < 86400) return `${Math.round(s / 3600)} H AGO`;
+  return new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).toUpperCase();
+};
+
+function syncTile() {
+  const st = sync.status;
+  const body = [];
+  if (!apiBase) body.push(h("p", { class: "sync-text", text: "Sync needs Shelfie's Worker. Set api-base in index.html." }));
+  else if (!sync.on && !linking) {
+    body.push(
+      h("p", { class: "sync-text", text: "Right now your shelves live only in this browser. On iPhone, Safari and the home-screen app each keep a separate copy, and either can be cleared by the phone." }),
+      h("p", { class: "sync-text", text: "Sync keeps one copy everywhere, encrypted on your device with a code only you hold." }),
+      h(
+        "div",
+        { class: "keys two" },
+        key("ON", "k-blue wide", async () => {
+          await sync.enable();
+          revealCode = true;
+          renderSyncTile();
+          feel("levelup", "success");
+          burst($("#sync-tile"), { count: 60 });
+        }, { sub: "TURN ON SYNC" }),
+        key("🔑", "k-cream", () => {
+          linking = true;
+          renderSyncTile();
+          setTimeout(() => $("#sync-code")?.focus(), 50);
+        }, { sub: "I HAVE A CODE" }),
+      ),
+    );
+  } else if (!sync.on && linking) {
+    const input = h("input", { id: "sync-code", type: "text", inputmode: "text", autocomplete: "off", autocapitalize: "characters", spellcheck: "false", placeholder: "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX", "aria-label": "Sync code" });
+    const msg = h("p", { class: "sync-text warn", role: "alert" });
+    const go = async () => {
+      msg.textContent = "LINKING…";
+      try {
+        await sync.link(input.value);
+        linking = false;
+        renderSyncTile();
+        feel("fanfare", "celebrate");
+        rain({ count: 120, emoji: ["🔗", "📚"] });
+        island.say({ icon: "🔗", title: "LINKED", sub: `${state.books.length} books on this shelf now`, tone: "lime" });
+      } catch (err) {
+        feel("error", "error");
+        msg.textContent = String(err.message || err).toUpperCase();
+      }
+    };
+    input.addEventListener("keydown", (e) => e.key === "Enter" && go());
+    body.push(
+      h("p", { class: "sync-text", text: "Type or paste the code from your other device (Stats → Sync & backup)." }),
+      h("label", { class: "lcd-input" }, h("span", { "aria-hidden": "true", text: "🔑" }), input),
+      msg,
+      h("div", { class: "keys two" }, key("LINK", "k-blue wide", go, { sub: "MERGE THE SHELVES" }), key("✕", "k-cream", () => ((linking = false), renderSyncTile()), { sub: "CANCEL" })),
+    );
+  } else {
+    const code = sync.code;
+    const shown = revealCode ? prettyCode(code) : `${code.slice(0, 4)}-••••-••••-••••-••••-••••`;
+    const state_ = st.state === "syncing" ? "SYNCING…" : st.state === "error" ? `⚠ ${st.error}`.toUpperCase() : `SYNCED ${ago(st.at)}`;
+    body.push(
+      h("p", { class: "sync-status" + (st.state === "error" ? " warn" : ""), text: state_ }),
+      h("small", { class: "p-label", text: "YOUR SYNC CODE" }),
+      h("button", { type: "button", class: "sync-code", "aria-label": revealCode ? `Sync code ${code.split("").join(" ")}. Tap to hide` : "Show sync code", on: { click: () => ((revealCode = !revealCode), renderSyncTile(), feel("flip", "light")) } }, shown),
+      h("p", { class: "sync-text", text: "Treat it like a password: anyone with it can see and change your shelves. To use them in the home-screen app or on another device, open Stats there → I have a code." }),
+      h(
+        "div",
+        { class: "keys three" },
+        key("⧉", "k-cream", async () => {
+          try {
+            await navigator.clipboard.writeText(prettyCode(code));
+            island.say({ icon: "📋", title: "CODE COPIED", sub: "Paste it in the other app", tone: "lime", buzz: false });
+            feel("pop", "success");
+          } catch {
+            revealCode = true;
+            renderSyncTile();
+          }
+        }, { sub: "COPY" }),
+        key("↻", "k-blue", () => sync.now(), { sub: "SYNC NOW" }),
+        key("⏻", "k-red", () => {
+          if (!confirm("Turn off sync on this device? Your shelves stay here; the synced copy stays for your other devices.")) return;
+          sync.disable();
+          revealCode = false;
+          renderSyncTile();
+        }, { sub: "TURN OFF" }),
+      ),
+    );
+  }
+  return h("div", { class: "tile t-sync span2", id: "sync-tile" }, h("small", { text: sync.on ? "🔒 END-TO-END ENCRYPTED SYNC: ON" : "🔒 END-TO-END ENCRYPTED SYNC" }), ...body);
+}
+
+function renderSyncTile() {
+  $("#sync-tile")?.replaceWith(syncTile());
 }
 
 function exportData() {
@@ -842,7 +1160,7 @@ async function importData(e) {
     const next = S.load({ getItem: () => text });
     if (!next.books.length && !next.xp) throw new Error("empty");
     state = next;
-    S.save(globalThis.localStorage, state);
+    state = S.save(globalThis.localStorage, state);
     renderShelf({ deal: 1 });
     renderStats();
     island.say({ icon: "✅", title: "SHELVES RESTORED", sub: `${state.books.length} books`, tone: "lime" });
@@ -855,13 +1173,26 @@ async function importData(e) {
    Adding books (pull up the + stamp)
    ============================================================ */
 
+// Books you add land on the shelf you were looking at when you opened search.
+let addShelf = "want";
+function drawLegend() {
+  const lab = (to, text) => h("span", { class: `lg ${to}` }, text);
+  $("#legend").replaceChildren(lab(addShelf, `TAP → ${SHELF[addShelf].label}`), h("span", { class: "lg-or", text: "OR SWIPE" }), lab("want", "→ WANT"), lab("reading", "→→ READING"), lab("read", "→→→ READ"));
+  $("#m-add").querySelector("span").textContent = `ADD TO ${SHELF[addShelf].label}`;
+  $("#add-title").textContent = `ADD TO ${SHELF[addShelf].label}`;
+}
+
 const add = createPanel($("#panel-add"), {
   onOpen: () => {
+    addShelf = shelf;
+    drawLegend();
+    feel("open", "medium");
     $("#q").value = "";
     $("#results").replaceChildren(suggestions());
     $("#source").textContent = "";
   },
   onClose: () => {
+    feel("close", "light");
     if (!added.length) return;
     const where = book(added[added.length - 1])?.shelf;
     added = [];
@@ -928,7 +1259,7 @@ function row(r) {
     h("span", { class: "row-text" }, h("b", { text: r.title }), h("small", { text: [r.author, r.year, r.pages ? `${r.pages} PG` : null].filter(Boolean).join(" · ") })),
     h("span", { class: "row-go", "aria-hidden": "true", text: have ? "✓" : "→" }),
   );
-  const el = h("div", { class: `row${have ? " have" : ""}`, role: "button", tabIndex: 0, "aria-label": have ? `${r.title}, already on your shelves` : `Add ${r.title} to Want. Swipe right for Reading or Read.` }, slab, face);
+  const el = h("div", { class: `row${have ? " have" : ""}`, role: "button", tabIndex: 0, "aria-label": have ? `${r.title}, already on your shelves` : `Add ${r.title} to ${SHELF[addShelf].label.toLowerCase()}. Swipe right for want, further for reading, further still for read.` }, slab, face);
   if (have) return el;
 
   const doAdd = (to, v = 900) => {
@@ -938,7 +1269,8 @@ function row(r) {
     added.push(res.events.find((e) => e.type === "added")?.book.id);
     el.dataset.to = to;
     label.textContent = `+ ${SHELF[to].label}`;
-    burst(face.querySelector(".row-go"), { count: 30, power: 0.7 });
+    feel("pop", "success");
+    burst(face.querySelector(".row-go"), { count: 40, power: 0.8 });
     const x = new Spring(currentX, { stiffness: 200, damping: 24, onChange: (val) => (face.style.transform = `translateX(${val}px)`) });
     x.to(el.clientWidth + 40, v);
     setTimeout(() => {
@@ -984,7 +1316,7 @@ function row(r) {
       el.dataset.level = String(lv);
       label.textContent = lv < 0 ? "WANT" : SHELF[LEVELS[lv].shelf].label;
       if (lv >= 0) {
-        buzz(10);
+        feel("snap", "select");
         label.animate([{ transform: "scale(1.4)" }, { transform: "none" }], { duration: 300, easing: "cubic-bezier(.2,1.6,.4,1)" });
       }
     }
@@ -994,7 +1326,7 @@ function row(r) {
     const mode = d.mode;
     d = null;
     if (mode === "scroll") return;
-    if (!mode) return doAdd("want");
+    if (!mode) return doAdd(addShelf);
     if (level >= 0) {
       doAdd(LEVELS[level].shelf, vel.get().x);
       return;
@@ -1011,7 +1343,7 @@ function row(r) {
   el.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      doAdd("want");
+      doAdd(addShelf);
     }
     if (e.key === "ArrowRight") doAdd("reading");
   });
@@ -1025,7 +1357,7 @@ $("#m-add").addEventListener("click", (e) => {
     $("#m-title").animate([{ transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "none" }], { duration: 300 });
     return;
   }
-  const res = commit(S.addBook(state, { title, author: $("#m-author").value, pages: $("#m-pages").value, shelf: "want" }), e.currentTarget);
+  const res = commit(S.addBook(state, { title, author: $("#m-author").value, pages: $("#m-pages").value, shelf: addShelf }), e.currentTarget);
   added.push(res.events.find((x) => x.type === "added")?.book.id);
   $("#m-title").value = "";
   $("#m-author").value = "";
@@ -1100,11 +1432,40 @@ requestAnimationFrame(() => {
   placeTape(false);
   renderShelf({ deal: 1 });
 });
-if (!state.seen) {
-  state = { ...state, seen: true };
-  S.save(globalThis.localStorage, state);
-  setTimeout(() => island.say({ icon: "👋", title: "WELCOME TO SHELFIE", sub: "Everything here works with a swipe", tone: "pink" }), 900);
+// Another tab, or the installed app sharing this storage, saved: fold its changes in.
+addEventListener("storage", (e) => {
+  if (e.key !== S.KEY || !e.newValue) return;
+  try {
+    applyIncoming(JSON.parse(e.newValue));
+  } catch {}
+});
+
+// Ask the browser to keep our storage even when space runs low (Chrome, Firefox, Safari 17+).
+navigator.storage?.persist?.().catch(() => {});
+
+if (sync.on) setTimeout(() => sync.now(), 400);
+
+/* ---------------- first run: the tutorial ---------------- */
+
+const TOUR = "shelfie.tour";
+function tutorialDone() {
+  try {
+    localStorage.setItem(TOUR, "1");
+  } catch {}
+  if (!state.seen) {
+    state = S.save(globalThis.localStorage, { ...state, seen: true });
+    setTimeout(() => island.say({ icon: "👋", title: "YOU'RE IN", sub: state.books.length ? "Swipe away" : "Add your first book: tap the + stamp", tone: "pink" }), 500);
+  }
 }
+$("#help").addEventListener("click", () => {
+  feel("open", "light");
+  startTutorial({ onDone: tutorialDone });
+});
+let toured = false;
+try {
+  toured = !!localStorage.getItem(TOUR);
+} catch {}
+if (!toured) setTimeout(() => startTutorial({ onDone: tutorialDone }), 700);
 // Hint that stats live below, once.
 if (!hints.has("stats")) setTimeout(() => !stats.isOpen && stats.peek(), 2600);
 

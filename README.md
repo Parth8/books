@@ -8,6 +8,10 @@ No account, no ads, no build step. Everything lives on your own device.
 
 ---
 
+## Learning it
+
+The first time you open Shelfie, a short **tour** walks through the gestures, and lets you practise each one on a demo stamp (it celebrates when you get it). Replay it any time from the **?** button next to the LCD, or Stats → Settings → How to use. After the tour, a small chip with a ghost finger shows the next gesture you haven't tried yet.
+
 ## Gestures
 
 | Where | Gesture | What happens |
@@ -40,6 +44,20 @@ Built from the moodboard: tactile neo-brutalism on near-black.
 - **Generated covers**: books without a cover (and any cover still loading) get grainy gradient art with a bold shape (flower, cube, sun, rings, stripes, dots), picked from the title so it's always the same.
 
 Fonts: Archivo (condensed, heavy), Space Mono and Silkscreen, all self-hosted.
+
+## Goals
+
+Three goals, set by spinning their rings in Stats (or with the arrow keys):
+
+- **Today**: pages a day (default 20)
+- **This month**: books finished (default 2)
+- **This year**: books finished (default 24)
+
+The LCD cycles through all three. Crossing one takes over the screen with a poster, and earns a badge for the month and year goals.
+
+## Sound and haptics
+
+Every interaction has a synthesised sound (no audio files) and a haptic: page ticks as you scrub, detents on the dial, keycap clicks, swooshes, a postmark thunk, coins for XP, fanfares for finishing and levelling up. Read in bursts and a **combo** builds up. Android vibrates; iPhone (which has no vibration API) gets the system tap through a hidden iOS 18 switch control. Both can be switched off in Stats → Settings.
 
 ## Gamification
 
@@ -91,12 +109,40 @@ Cloudflare Worker (worker/worker.js) ── checks origin, rate-limits, validate
 
 Optionally add a Rate Limiting binding named `LIMITER` for platform-level limits.
 
+## Sync, and why data seemed to disappear
+
+Your shelves are stored in the browser. Two things made them look lost:
+
+1. **On iPhone, Safari and the home-screen app are different browsers** as far as storage goes. Each has its own, empty, copy. Data added in one never shows in the other.
+2. **Phones clear website storage** on their own when space is low or a site hasn't been opened for a while.
+
+On top of that, two copies open at once (two tabs, or Chrome and the installed app on Android) used to overwrite each other. That's fixed: every save now merges with what's already stored, and open copies pick up each other's changes live.
+
+**Sync** fixes the rest. Stats → Sync & backup → **Turn on sync** creates a sync code on this device. In the other place (the home-screen app, another phone, a laptop) open Stats → **I have a code** and type it. Both copies merge, and from then on they stay in step: after every change, when the app comes back to the screen, and when you're back online.
+
+- **End-to-end encrypted.** The shelves are encrypted in the browser (AES-256-GCM) with a key derived from the code. The Worker stores only ciphertext under a SHA-256 hash of the code. Neither the code nor anything readable ever reaches the server.
+- **Nothing is lost in a merge.** Each book keeps its latest version, removals are remembered (so a removed book doesn't come back from another copy), the reading log keeps the higher count per day, and badges and eggs are pooled.
+- **Two devices saving at the same moment** don't overwrite each other: the second one gets the first one's copy back, merges, and saves again.
+- The code is the only key. Treat it like a password, and keep it somewhere safe: without it, the synced copy can't be read by anyone, including us.
+- The browser is also asked to keep Shelfie's storage persistent, and a damaged saved copy is set aside rather than overwritten.
+
+### Switching sync on in Cloudflare
+
+Sync uses a Workers KV store:
+
+1. Cloudflare dashboard → **Storage & Databases → KV → Create namespace** → name it `shelf-sync` → Create.
+2. **Workers & Pages → shelf-api → Settings → Bindings → Add → KV namespace**: variable name **`SYNC`**, namespace `shelf-sync` → Deploy.
+3. **Edit code** → paste the new `worker/worker.js` → Deploy.
+4. `…/api/health` now shows `"sync":true`.
+
+Synced copies expire after 400 days without a save.
+
 ## Security and privacy
 
 - **Strict Content Security Policy.** Scripts load only from this site. The page can connect only to its own Worker (and Open Library as the keyless fallback); images only from the two cover hosts.
 - **No untrusted HTML.** Book data is written with `textContent`; only cover addresses from Google Books or Open Library are stored or shown, and the page re-checks everything the Worker sends.
 - **Secrets stay server-side.** See above.
-- **Nothing about visitors is stored.** No accounts, cookies or analytics. Your shelves live in `localStorage` on your device. The Worker keeps no logs of who searched.
+- **Nothing about visitors is stored.** No accounts, cookies or analytics. Your shelves live in `localStorage` on your device. If you turn on sync, the Worker keeps an encrypted copy it cannot read. The Worker keeps no logs of who searched.
 - **No referrers to third parties.** Credentials are omitted from API calls.
 
 ---
@@ -123,12 +169,16 @@ js/
   eggs.js             Easter eggs
   confetti.js         Confetti on one canvas
   search.js           Search through the Worker, Open Library if it can't be reached
+  sync.js             End-to-end encrypted sync: codes, key derivation, AES-GCM, merge rounds
+  sfx.js              Synthesised sounds, and haptics (Android vibration, iPhone's system tap)
+  tutorial.js         The hands-on tour
   util.js             Safe DOM builder, seeded random
-worker/worker.js      The Cloudflare Worker: holds the Google key, searches, caches
+worker/worker.js      The Cloudflare Worker: holds the Google key, searches, caches, stores encrypted sync copies
 tests/
   store.test.mjs      Rules (node --test)
   search.test.mjs     Turning search answers into books
-  worker.test.mjs     The Worker: key handling, redaction, origin, rate limits, fallback
+  worker.test.mjs     The Worker: key handling, redaction, origin, rate limits, fallback, sync store
+  sync.test.mjs       Sync codes and encryption
   no-secrets.test.mjs Fails if anything shaped like a key is committed
   app.e2e.mjs         The whole app with real pointer gestures (Playwright, searches stubbed)
 tools/build-icons.mjs App icons from one SVG mark

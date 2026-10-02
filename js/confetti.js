@@ -159,3 +159,61 @@ function point(at) {
   }
   return at || { x: innerWidth / 2, y: innerHeight / 2 };
 }
+
+/** Little pages fluttering off a book while you read. `up` sends them upward. */
+export function pages(at, { count = 3, up = true } = {}) {
+  if (prefersReducedMotion()) return;
+  ensure();
+  const { x, y } = point(at);
+  for (let i = 0; i < count; i++) {
+    parts.push({
+      x: x + (Math.random() - 0.5) * 80,
+      y: y + (Math.random() - 0.5) * 40,
+      vx: (Math.random() - 0.5) * 3,
+      vy: up ? -3 - Math.random() * 4 : 2 + Math.random() * 2,
+      g: 0.12,
+      drag: 0.97,
+      rot: Math.random() * 6,
+      vr: (Math.random() - 0.5) * 0.5,
+      size: 10 + Math.random() * 6,
+      color: Math.random() < 0.8 ? "#f6f1e6" : "#e7ff3d",
+      kind: "rect",
+      text: "",
+      life: 55 + Math.random() * 25,
+    });
+  }
+  start();
+}
+
+/** A shower of spinning coins: XP you can see. */
+export function coins(at, n = 12) {
+  burst(at, { count: n, kinds: ["dot"], colors: ["#ffd60a", "#ffe873", "#ffb800"], power: 0.9, spread: 0.9 });
+}
+
+/** A ring that expands from a point and fades: for landings and big moments. */
+export function shockwave(at, color = "#e7ff3d") {
+  if (prefersReducedMotion()) return;
+  const { x, y } = point(at);
+  const el = document.createElement("i");
+  el.className = "shockwave";
+  el.style.cssText = `left:${x}px;top:${y}px;border-color:${color}`;
+  document.body.append(el);
+  try {
+    el.popover = "manual";
+    el.showPopover?.();
+  } catch {}
+  el.animate([{ transform: "translate(-50%,-50%) scale(0.1)", opacity: 1 }, { transform: "translate(-50%,-50%) scale(1)", opacity: 0 }], { duration: 650, easing: "cubic-bezier(.2,.8,.2,1)" }).finished.then(
+    () => el.remove(),
+    () => el.remove(),
+  );
+}
+
+/** Shake an element like something heavy just landed. */
+export function shake(el, strength = 8) {
+  if (prefersReducedMotion() || !el?.animate) return;
+  const k = strength;
+  el.animate(
+    [{ transform: "none" }, { transform: `translate(${-k}px, ${k / 2}px) rotate(-0.6deg)` }, { transform: `translate(${k}px, ${-k / 2}px) rotate(0.6deg)` }, { transform: `translate(${-k / 2}px, ${k / 3}px)` }, { transform: `translate(${k / 3}px, 0)` }, { transform: "none" }],
+    { duration: 420, easing: "ease-out" },
+  );
+}

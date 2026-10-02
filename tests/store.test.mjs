@@ -178,3 +178,101 @@ test("shelf sorts by most recently touched", () => {
   s = S.setPage(s, s.books[0].id, 5, day(3)).state;
   assert.deepEqual(S.shelf(s, "reading").map((b) => b.title), ["A", "B"]);
 });
+
+test("goals: daily, monthly and yearly fire once when crossed", () => {
+  let s = S.empty();
+  s = { ...s, goalMonth: 1, goalYear: 2 };
+  s = S.addBook(s, { title: "A", pages: 100, shelf: "reading" }, day(1)).state;
+  const a = s.books[0].id;
+  let r = S.setPage(s, a, 20, day(2));
+  assert.ok(r.events.some((e) => e.type === "goal" && e.period === "day" && e.target === 20));
+  r = S.setPage(r.state, a, 100, day(2));
+  assert.ok(r.events.some((e) => e.type === "goal" && e.period === "month"));
+  assert.ok(!r.events.some((e) => e.type === "goal" && e.period === "year"), "one of two books this year");
+  assert.ok(!r.events.some((e) => e.type === "goal" && e.period === "day"), "already hit today");
+  s = S.addBook(r.state, { title: "B", pages: 50, shelf: "reading" }, day(3)).state;
+  r = S.moveBook(s, s.books[1].id, "read", day(3));
+  assert.ok(r.events.some((e) => e.type === "goal" && e.period === "year" && e.target === 2));
+  assert.ok(r.state.badges["year-goal"]);
+  assert.equal(S.finishedIn(r.state, "month", day(5)), 2);
+  assert.equal(S.finishedIn(r.state, "year", new Date(2027, 0, 2)), 0);
+  assert.equal(S.pagesIn(r.state, "month", day(5)), 150);
+});
+
+test("setGoal keeps each goal in range and stamps when it changed", () => {
+  let s = S.setGoal(S.empty(), 0, "day", day(1)).state;
+  assert.equal(s.goal, 5);
+  s = S.setGoal(s, 99, "month", day(1)).state;
+  assert.equal(s.goalMonth, 31);
+  s = S.setGoal(s, 52, "year", day(2)).state;
+  assert.equal(s.goalYear, 52);
+  assert.equal(s.goalsAt, day(2).getTime());
+  assert.equal(S.setGoal(s, 3, "nonsense").state, s);
+});
+
+test("removing a book leaves a marker, so a sync doesn't bring it back", () => {
+  const { state, id } = withBook();
+  const removed = S.removeBook(state, id, day(5)).state;
+  assert.ok(removed.gone[id]);
+  const merged = S.merge(removed, state); // the other copy still has it
+  assert.equal(merged.books.length, 0);
+  // ...unless it was changed after the removal.
+  const later = S.setPage(state, id, 10, day(6)).state;
+  assert.equal(S.merge(removed, later).books.length, 1);
+});
+
+test("merge keeps the newest version of each book and loses nothing", () => {
+  let phone = S.empty();
+  phone = S.addBook(phone, { title: "On the phone", pages: 100, shelf: "reading" }, day(1)).state;
+  let web = S.addBook(S.empty(), { title: "On the web", pages: 200, shelf: "want" }, day(1)).state;
+  const shared = phone.books[0];
+  web = { ...web, books: [...web.books, { ...shared }] };
+  phone = S.setPage(phone, shared.id, 40, day(2)).state;
+  web = S.findEgg(web, "app", "party", day(2)).state;
+  const m = S.merge(phone, web);
+  assert.deepEqual(m.books.map((b) => b.title).sort(), ["On the phone", "On the web"]);
+  assert.equal(m.books.find((b) => b.id === shared.id).page, 40);
+  assert.deepEqual(m.eggs, ["app:party"]);
+  assert.equal(m.log["2026-10-02"], 40);
+  assert.equal(m.xp, Math.max(phone.xp, web.xp));
+  // Same answer whichever way round, and merging twice changes nothing.
+  assert.deepEqual(S.merge(web, phone), m);
+  assert.deepEqual(S.merge(m, m), m);
+  assert.deepEqual(S.merge(m, phone), m);
+});
+
+test("merge takes the most recently set goals", () => {
+  const a = S.setGoal(S.empty(), 30, "day", day(1)).state;
+  const b = S.setGoal(S.empty(), 12, "year", day(2)).state;
+  const m = S.merge(a, b);
+  assert.equal(m.goalYear, 12);
+  assert.equal(m.goal, 20, "b's goals are newer, as a set");
+});
+
+test("save merges with what another tab saved, instead of overwriting it", () => {
+  const mem = new Map();
+  const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) };
+  const tabA = S.addBook(S.empty(), { title: "From tab A" }, day(1)).state;
+  S.save(storage, tabA);
+  const tabB = S.addBook(S.empty(), { title: "From tab B" }, day(1)).state; // B never saw A's book
+  const saved = S.save(storage, tabB);
+  assert.deepEqual(saved.books.map((b) => b.title).sort(), ["From tab A", "From tab B"]);
+  assert.deepEqual(S.load(storage).books.length, 2);
+});
+
+test("a damaged saved copy is kept aside, not overwritten", () => {
+  const mem = new Map([[S.KEY, "{oops"]]);
+  const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) };
+  assert.deepEqual(S.load(storage), S.empty());
+  const kept = [...mem.keys()].find((k) => k.startsWith(`${S.KEY}.damaged.`));
+  assert.equal(mem.get(kept), "{oops");
+});
+
+test("older saved copies gain the new fields", () => {
+  const old = { v: 1, books: [], log: {}, xp: 5, goal: 30, badges: {}, eggs: [], seen: true };
+  const s = S.normalise(old);
+  assert.equal(s.goal, 30);
+  assert.equal(s.goalMonth, 2);
+  assert.equal(s.goalYear, 24);
+  assert.deepEqual(s.gone, {});
+});

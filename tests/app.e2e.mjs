@@ -22,24 +22,59 @@ const ONLY = process.env.ONLY || "";
 const browser = await chromium.launch();
 let failures = 0;
 
-async function run(name, fn, { motion = "reduce", google = "ok", allow = null } = {}) {
+const WORKER = "https://shelf-api.8parthaggarwal1999.workers.dev";
+
+/** A stand-in for the Worker's sync store, shared by every browser in one test. */
+function fakeSync(store) {
+  return async (r) => {
+    const req = r.request();
+    const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, PUT", "access-control-allow-headers": "Content-Type" };
+    if (req.method() === "OPTIONS") return r.fulfill({ status: 204, headers: cors });
+    const key = new URL(req.url()).pathname;
+    const cur = store.get(key);
+    if (req.method() === "GET") return r.fulfill({ headers: cors, contentType: "application/json", body: JSON.stringify(cur || { rev: 0 }) });
+    const b = JSON.parse(req.postData());
+    assert.ok(!/Dune|Hitchhiker|title/.test(req.postData()), "only ciphertext goes to the server");
+    if (cur && cur.rev !== b.base) return r.fulfill({ status: 409, headers: cors, contentType: "application/json", body: JSON.stringify(cur) });
+    store.set(key, { rev: (cur?.rev || 0) + 1, iv: b.iv, ct: b.ct });
+    return r.fulfill({ headers: cors, contentType: "application/json", body: JSON.stringify({ rev: (cur?.rev || 0) + 1 }) });
+  };
+}
+
+async function setup(page, { google = "ok", tour = false, store = new Map() } = {}) {
+  const cors = { "access-control-allow-origin": "*" };
+  if (!tour) await page.addInitScript(() => localStorage.setItem("shelfie.tour", "1"));
+  await page.route(`${WORKER}/api/search*`, (r) =>
+    google === "ok" ? r.fulfill({ contentType: "application/json", body: WORKER_GOOGLE, headers: cors }) : r.fulfill({ status: 503, contentType: "application/json", body: '{"error":"upstream_unavailable"}', headers: cors }),
+  );
+  await page.route(`${WORKER}/api/sync/**`, fakeSync(store));
+  await page.route("https://www.googleapis.com/**", () => {
+    throw new Error("the page must never call Google's API directly");
+  });
+  await page.route("https://openlibrary.org/search.json*", (r) => r.fulfill({ contentType: "application/json", body: OPEN_LIBRARY, headers: cors }));
+  for (const host of ["https://books.google.com/**", "https://covers.openlibrary.org/**"]) await page.route(host, (r) => r.fulfill({ contentType: "image/png", body: COVER }));
+}
+
+async function run(name, fn, { motion = "reduce", google = "ok", allow = null, tour = false, raw = false } = {}) {
   if (ONLY && !name.includes(ONLY)) return;
+  if (raw) {
+    // The test sets up its own browsers.
+    try {
+      await fn();
+      console.log(`ok   ${name}`);
+    } catch (err) {
+      failures++;
+      console.log(`FAIL ${name}\n     ${err.message.split("\n").slice(0, 8).join("\n     ")}`);
+    }
+    return;
+  }
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: motion });
   const page = await ctx.newPage();
   if (process.env.SLOW) await (await ctx.newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.SLOW) });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && !(allow && allow.test(m.text())) && errors.push(m.text()));
-  const cors = { "access-control-allow-origin": "*" };
-  // Shelfie's Worker (the only place the Google key lives). "down" means it can't be reached.
-  await page.route("https://shelf-api.8parthaggarwal1999.workers.dev/api/search*", (r) =>
-    google === "ok" ? r.fulfill({ contentType: "application/json", body: WORKER_GOOGLE, headers: cors }) : r.fulfill({ status: 503, contentType: "application/json", body: '{"error":"upstream_unavailable"}', headers: cors }),
-  );
-  await page.route("https://www.googleapis.com/**", () => {
-    throw new Error("the page must never call Google's API directly");
-  });
-  await page.route("https://openlibrary.org/search.json*", (r) => r.fulfill({ contentType: "application/json", body: OPEN_LIBRARY, headers: cors }));
-  for (const host of ["https://books.google.com/**", "https://covers.openlibrary.org/**"]) await page.route(host, (r) => r.fulfill({ contentType: "image/png", body: COVER }));
+  await setup(page, { google, tour });
   try {
     await page.goto(SITE);
     await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
@@ -69,6 +104,17 @@ async function drag(page, from, to, { steps = 12, hold = 0, pause = 12 } = {}) {
   }
   await page.mouse.up();
 }
+/** Flip the pile (with the keyboard) until a book is on top. */
+async function goTo(page, id) {
+  await page.focus("#deck");
+  for (let i = 0; i < 12; i++) await page.keyboard.press("ArrowLeft");
+  for (let i = 0; i < 24; i++) {
+    if ((await page.evaluate(() => globalThis.__shelfie.top)) === id) return;
+    await page.keyboard.press("ArrowRight");
+  }
+  throw new Error(`couldn't find ${id} in the pile`);
+}
+
 async function center(loc) {
   const b = await loc.boundingBox();
   return { x: b.x + b.width / 2, y: b.y + b.height / 2, b };
@@ -184,8 +230,7 @@ await run("the knob and keycaps log pages", async (page) => {
 await run("finishing a book: poster, it moves to Read, rate it with a feeling", async (page) => {
   await starter(page);
   const hhg = (await state(page)).books.find((b) => b.title.startsWith("The Hitchhiker"));
-  await page.focus("#deck");
-  while ((await app(page)).top !== hhg.id) await page.keyboard.press("ArrowRight");
+  await goTo(page, hhg.id);
   for (let i = 0; i < 8; i++) await page.click('.dock .key[aria-label="Add 25 pages"]');
   await page.waitForSelector(".poster");
   assert.match(await page.textContent(".poster"), /DONE\./);
@@ -200,8 +245,7 @@ await run("finishing a book: poster, it moves to Read, rate it with a feeling", 
     el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 3 }));
   });
   await page.waitForFunction(() => globalThis.__shelfie.shelf === "read");
-  await page.focus("#deck");
-  while ((await app(page)).top !== hhg.id) await page.keyboard.press("ArrowRight");
+  await goTo(page, hhg.id);
   await page.click('.dock .key[aria-label="Mind blown"]');
   b = (await state(page)).books.find((x) => x.id === hhg.id);
   assert.equal(b.rating, 5);
@@ -278,7 +322,7 @@ await run("tap flips a stamp; double-tap pokes it for an easter egg", async (pag
   assert.equal((await state(page)).eggs[0], `${dune.id}:spice`);
 });
 
-await run("search Google Books: tap adds to Want, swipe further for Reading", async (page) => {
+await run("search Google Books: tap adds to this shelf, swipe picks one", async (page) => {
   await page.click('.dock .key:has-text("SEARCH")');
   await page.waitForSelector("#panel-add[aria-hidden=false]");
   await page.fill("#q", "dune");
@@ -289,7 +333,7 @@ await run("search Google Books: tap adds to Want, swipe further for Reading", as
   await page.waitForFunction(() => globalThis.__shelfie.state.books.length === 1);
   let s = await state(page);
   assert.equal(s.books[0].title, "Dune");
-  assert.equal(s.books[0].shelf, "want");
+  assert.equal(s.books[0].shelf, "reading", "a tap adds to the shelf search was opened from");
   assert.equal(s.books[0].pages, 535);
   assert.equal(s.books[0].img, "https://books.google.com/books/content?id=B1hSG45JCX4C&printsec=frontcover&img=1&zoom=1&fife=w480-h720&source=gbs_api");
   assert.equal(s.books[0].blurb, "Set on the desert planet Arrakis, Dune is the story of the boy Paul Atreides.");
@@ -301,7 +345,7 @@ await run("search Google Books: tap adds to Want, swipe further for Reading", as
   assert.equal(s.books[1].title, "Dune Messiah");
   assert.equal(s.books[1].shelf, "reading");
   await page.click("#panel-add [data-close]");
-  await page.waitForFunction(() => globalThis.__shelfie.shelf === "reading" && globalThis.__shelfie.pile.length === 2);
+  await page.waitForFunction(() => globalThis.__shelfie.shelf === "reading" && globalThis.__shelfie.pile.length === 3);
 });
 
 await run("search falls back to Open Library when the Worker can't answer", async (page) => {
@@ -321,22 +365,37 @@ await run("pull the + stamp up to open search, and add a book by hand", async (p
   await page.click("details.manual summary");
   await page.fill("#m-title", "My Zine");
   await page.fill("#m-pages", "42");
+  assert.equal(await page.textContent("#m-add"), "ADD TO READING");
   await page.click("#m-add");
   await page.waitForSelector("#panel-add[aria-hidden=true]", { state: "attached" });
   const s = await state(page);
   assert.equal(s.books[0].title, "My Zine");
   assert.equal(s.books[0].pages, 42);
-  await page.waitForFunction(() => globalThis.__shelfie.shelf === "want");
+  assert.equal(s.books[0].shelf, "reading");
 });
 
-await run("pull the stats bar up; spin the dial to set a goal", async (page) => {
+await run("pull the stats bar up; set daily, monthly and yearly goals", async (page) => {
   const p = await center(page.locator("#pullbar"));
   await drag(page, p, { x: p.x, y: p.y - 500 }, { steps: 10 });
   await page.waitForSelector("#panel-stats[aria-hidden=false]");
   await page.waitForSelector(".tile.t-level");
-  await page.focus(".t-dial");
+  await page.focus(".t-dial[data-kind=day]");
   await page.keyboard.press("ArrowUp");
   assert.equal((await state(page)).goal, 25);
+  await page.focus(".t-dial[data-kind=month]");
+  await page.keyboard.press("ArrowUp");
+  assert.equal((await state(page)).goalMonth, 3);
+  await page.focus(".t-dial[data-kind=year]");
+  await page.keyboard.press("ArrowDown");
+  assert.equal((await state(page)).goalYear, 23);
+  // Spin the year ring with a finger: a quarter turn from the top is about a quarter of 365.
+  const d = await center(page.locator(".t-dial[data-kind=year] .dial-svg"));
+  await page.mouse.move(d.x, d.y - 40);
+  await page.mouse.down();
+  for (let a = 0; a <= 90; a += 10) await page.mouse.move(d.x + Math.sin((a * Math.PI) / 180) * 40, d.y - Math.cos((a * Math.PI) / 180) * 40);
+  await page.mouse.up();
+  const y = (await state(page)).goalYear;
+  assert.ok(y > 80 && y < 100, `about a quarter of the ring (got ${y})`);
   await page.keyboard.press("Escape");
   await page.waitForSelector("#panel-stats[aria-hidden=true]", { state: "attached" });
 });
@@ -352,6 +411,137 @@ await run("shelves survive a reload", async (page) => {
   await page.reload();
   await page.waitForFunction(() => globalThis.__shelfie?.pile.length === 3);
   assert.equal((await state(page)).books.length, n);
+});
+
+await run("first launch: the tour teaches each gesture, and remembers it was seen", async (page) => {
+  await page.waitForSelector(".tour");
+  assert.match(await page.textContent(".tour-title"), /HEY/);
+  await page.click(".tour-btn.go");
+  // Swipe the practice pile.
+  const p = await center(page.locator(".tt-pile"));
+  await drag(page, p, { x: p.x - 140, y: p.y }, { steps: 8 });
+  await page.waitForSelector(".tour-try.done");
+  await page.click(".tour-btn.go");
+  // Drag the practice stamp up.
+  const q = await center(page.locator(".tt-pile"));
+  await drag(page, { x: q.x, y: q.y + 60 }, { x: q.x, y: q.y - 120 }, { steps: 10 });
+  await page.waitForSelector(".tour-try.done");
+  for (let i = 0; i < 3; i++) await page.click(".tour-btn.go");
+  assert.match(await page.textContent(".tour-btn.go"), /START READING/);
+  await page.click(".tour-btn.go");
+  await page.waitForSelector(".tour", { state: "detached" });
+  assert.equal(await page.evaluate(() => localStorage.getItem("shelfie.tour")), "1");
+  await page.reload();
+  await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+  await page.waitForTimeout(1200);
+  assert.equal(await page.locator(".tour").count(), 0, "not shown again");
+  await page.click("#help");
+  await page.waitForSelector(".tour");
+  await page.click(".tour-skip");
+  await page.waitForSelector(".tour", { state: "detached" });
+}, { tour: true });
+
+await run("adding from a shelf adds to that shelf", async (page) => {
+  await starter(page);
+  await page.focus(".tape-item[data-shelf=reading]");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() => globalThis.__shelfie.shelf === "read");
+  await goTo(page, "add");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("#panel-add[aria-hidden=false]");
+  assert.equal(await page.textContent("#add-title"), "ADD TO READ");
+  await page.fill("#q", "dune");
+  await page.waitForSelector(".row:not(.have)");
+  await page.locator(".row:not(.have)").first().click();
+  await page.waitForFunction(() => globalThis.__shelfie.state.books.some((b) => b.title === "Dune Messiah"));
+  assert.equal((await state(page)).books.find((b) => b.title === "Dune Messiah").shelf, "read");
+});
+
+await run("two tabs don't wipe each other's changes", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+  const [a, b] = [await ctx.newPage(), await ctx.newPage()];
+  for (const p of [a, b]) {
+    await setup(p);
+    await p.goto(SITE);
+    await p.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+  }
+  await starter(a); // tab A adds eight books; tab B is still showing an empty shelf
+  await b.waitForFunction(() => globalThis.__shelfie.state.books.length === 8, null, { timeout: 5000 });
+  await b.waitForFunction(() => globalThis.__shelfie.pile.length === 3, null, { timeout: 5000 }); // dealt in on B too
+  await goTo(b, "add");
+  await b.click('.dock .key:has-text("SEARCH")');
+  await b.fill("#q", "dune");
+  await b.waitForSelector(".row:not(.have)");
+  await b.locator(".row:not(.have)").first().click();
+  await a.waitForFunction(() => globalThis.__shelfie.state.books.length === 9, null, { timeout: 5000 });
+  const saved = await a.evaluate(() => JSON.parse(localStorage.getItem("shelf.v1")).books.length);
+  assert.equal(saved, 9);
+  await ctx.close();
+}, { raw: true });
+
+await run("sync: Safari and the home-screen app share one set of shelves", async () => {
+  const store = new Map();
+  // Two separate browsers: separate storage, like Safari and an installed app on iPhone.
+  const open = async () => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+    const page = await ctx.newPage();
+    await setup(page, { store });
+    await page.goto(SITE);
+    await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+    return { ctx, page };
+  };
+  const safari = await open();
+  const app = await open();
+  try {
+  await starter(safari.page);
+  await safari.page.click("#pullbar");
+  await safari.page.click('#sync-tile .key:has-text("ON")');
+  await safari.page.waitForFunction(() => /SYNCED/.test(document.querySelector("#sync-tile")?.textContent || ""));
+  const code = await safari.page.evaluate(() => JSON.parse(localStorage.getItem("shelfie.sync")).code);
+  assert.equal(store.size, 1);
+  const [stored] = store.values();
+  assert.ok(!JSON.stringify(stored).includes(code), "the code never reaches the server");
+
+  // The app links with the code (typed messily) and gets everything.
+  await app.page.click("#pullbar");
+  await app.page.click('#sync-tile .key:has-text("I HAVE A CODE")');
+  await app.page.fill("#sync-code", code.toLowerCase().match(/.{1,4}/g).join(" "));
+  await app.page.click('#sync-tile .key:has-text("LINK")');
+  await app.page.waitForFunction(() => globalThis.__shelfie.state.books.length === 8);
+
+  // Read in the app; Safari picks it up.
+  await app.page.click("#panel-stats [data-close]");
+  await app.page.waitForTimeout(300);
+  const dune = (await state(app.page)).books.find((b) => b.title === "Dune");
+  await goTo(app.page, dune.id);
+  await app.page.click('.dock .key[aria-label="Add 10 pages"]');
+  await app.page.waitForFunction((id) => globalThis.__shelfie.state.books.find((b) => b.id === id).page === 222, dune.id);
+  await app.page.waitForTimeout(3000); // the app syncs a moment after a change
+  await safari.page.click('#sync-tile .key:has-text("SYNC NOW")');
+  await safari.page.waitForFunction((id) => globalThis.__shelfie.state.books.find((b) => b.id === id).page === 222, dune.id);
+
+  // A wrong code is refused without touching anything.
+  const third = await open();
+  await third.page.click("#pullbar");
+  await third.page.click('#sync-tile .key:has-text("I HAVE A CODE")');
+  await third.page.fill("#sync-code", "not a code");
+  await third.page.click('#sync-tile .key:has-text("LINK")');
+  await third.page.waitForFunction(() => /ISN'T A SYNC CODE/.test(document.querySelector("#sync-tile").textContent));
+  await third.ctx.close();
+  } finally {
+    await safari.ctx.close();
+    await app.ctx.close();
+  }
+}, { raw: true });
+
+await run("sound and haptics can be switched off, and stay off", async (page) => {
+  await page.click("#pullbar");
+  await page.click('.key[aria-label="sound"]');
+  await page.click('.key[aria-label="haptics"]');
+  const fxp = await page.evaluate(() => JSON.parse(localStorage.getItem("shelfie.fx")));
+  assert.deepEqual(fxp, { sound: false, haptics: false });
+  assert.equal(await page.getAttribute('.key[aria-label="sound"]', "aria-pressed"), "false");
 });
 
 await run(
