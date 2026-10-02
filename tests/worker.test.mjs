@@ -90,7 +90,7 @@ test("the key never appears in a response", async () => {
   const r = await call("/api/search?q=dune");
   assert.ok(!JSON.stringify(r.body).includes(KEY));
   const h = await call("/api/health");
-  assert.deepEqual(h.body, { ok: true, google: true, sync: false });
+  assert.deepEqual(h.body, { ok: true, google: true, sync: false, accounts: false });
 });
 
 test("a response that somehow contains the key is blocked", async () => {
@@ -234,4 +234,24 @@ test("sync: the browser may send JSON with PUT (preflight)", async () => {
   assert.match(r.headers.get("Access-Control-Allow-Methods"), /PUT/);
   assert.match(r.headers.get("Access-Control-Allow-Headers"), /Content-Type/);
   assert.equal(r.headers.get("Access-Control-Allow-Origin"), ORIGIN);
+});
+
+test("covers by ISBN: a sharp Google cover, looked up once, key only to Google", async () => {
+  upstream.set("www.googleapis.com", () => new Response(JSON.stringify({ items: [{ id: "nocover1" , volumeInfo: {} }, { id: "B1hSG45JCX4C", volumeInfo: { imageLinks: { thumbnail: "http://x" } } }] })));
+  const r = await call("/api/cover?isbn=978-0-441-01359-3");
+  assert.equal(r.status, 200);
+  assert.match(r.body.img, /^https:\/\/books\.google\.com\/books\/content\?id=B1hSG45JCX4C&.*fife=w720-h1080/);
+  assert.ok(!JSON.stringify(r.body).includes(KEY));
+  assert.equal(new URL(calls[0]).searchParams.get("q"), "isbn:9780441013593");
+  await call("/api/cover?isbn=9780441013593");
+  assert.equal(calls.length, 1, "cached");
+  assert.equal((await call("/api/cover?isbn=12345")).status, 400);
+});
+
+test("covers by ISBN: none found is a normal answer, and no key means no lookup", async () => {
+  upstream.set("www.googleapis.com", () => new Response("{}"));
+  assert.deepEqual((await call("/api/cover?isbn=0441013597")).body, { img: null });
+  calls = [];
+  assert.deepEqual((await call("/api/cover?isbn=0441013598", { extra: { GOOGLE_BOOKS_KEY: "" } })).body, { img: null });
+  assert.equal(calls.length, 0);
 });

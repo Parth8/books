@@ -20,10 +20,12 @@ import { createHints } from "./hints.js";
 import { burst, rain, floatText, pages as flutter, coins, shockwave, shake } from "./confetti.js";
 import { sound, haptic, feel, fx } from "./sfx.js";
 import { createSync, prettyCode } from "./sync.js";
+import { createAccount, passwordProblem, strength, cleanLogin } from "./account.js";
 import { startTutorial } from "./tutorial.js";
 import { popup } from "./modal.js";
 import { tip, holdTipsWhile, resetTips } from "./tips.js";
 import { createCritters } from "./critters.js";
+import { canInstall, showInstall, shouldOffer, markOffered, chaiCard } from "./home.js";
 import * as Q from "./quips.js";
 import { fromGoodreads } from "./goodreads.js";
 import { poke } from "./eggs.js";
@@ -58,6 +60,13 @@ const book = (id) => state.books.find((b) => b.id === id);
    Changes and celebrations
    ============================================================ */
 
+// Changes go to whichever backup is on: your account, or (without one) a sync code.
+let account = null;
+function backupSoon() {
+  if (account?.on) account.soon();
+  else sync.soon();
+}
+
 function commit(result, at, { keepStats = false } = {}) {
   const before = state;
   state = result.state;
@@ -66,7 +75,7 @@ function commit(result, at, { keepStats = false } = {}) {
   celebrate(events, at);
   renderHud();
   if (stats.isOpen && !keepStats) renderStats();
-  sync.soon();
+  backupSoon();
   void before;
   return result;
 }
@@ -416,12 +425,13 @@ let aliveTimer = 0;
 function onTop(id) {
   if (topId !== id) deckEl.querySelectorAll(".stamp.flipped").forEach((s) => s.classList.remove("flipped"));
   topId = id;
-  // The cover art plays for a few seconds when a stamp lands on top, then rests (battery).
+  // The cover art's own shapes dance for a while when a stamp lands on top (SVG animations
+  // are drawn by the CPU, so they rest after that; the cover keeps drifting on the GPU).
   deckEl.querySelectorAll(".stamp.alive").forEach((s) => s.classList.remove("alive"));
   const topEl = deck.top?.el;
   topEl?.classList.add("alive");
   clearTimeout(aliveTimer);
-  aliveTimer = setTimeout(() => topEl?.classList.remove("alive"), 6000);
+  aliveTimer = setTimeout(() => topEl?.classList.remove("alive"), 12000);
   const b = book(id);
   const canvas = deck.top?.el.querySelector("canvas.liquid");
   if (canvas !== liquidEl) {
@@ -582,7 +592,7 @@ function undo(id, before) {
   const s = { ...state, books: [...state.books.filter((x) => x.id !== id), { ...b, touched: Date.now() }], gone: { ...state.gone } };
   delete s.gone[id];
   state = S.save(globalThis.localStorage, s);
-  sync.soon();
+  backupSoon();
   renderShelf();
   island.say({ icon: "↩️", title: "BACK ON THE SHELF", tone: "lime", buzz: false });
 }
@@ -809,6 +819,7 @@ const stats = createPanel($("#panel-stats"), {
     hints.learn("stats");
     feel("open", "medium");
     renderStats();
+    checkAccounts();
   },
   onClose: () => feel("close", "light"),
   onProgress: (p) => document.body.style.setProperty("--panel", p.toFixed(3)),
@@ -875,7 +886,9 @@ function renderStats() {
       }),
     ),
     h("h3", { class: "p-h", text: "SYNC & BACKUP" }),
-    syncTile(),
+    accountTile(),
+    // The sync code is the fallback for people without an account (and stays for anyone using one).
+    account?.on ? null : sync.on || accountsUp !== true ? syncTile() : null,
     h(
       "div",
       { class: "keys two p-actions" },
@@ -894,6 +907,15 @@ function renderStats() {
       h("p", { class: "sync-text", text: "Bring your whole library in: read (with dates and ratings), currently reading, and want-to-read. The file never leaves your device." }),
       h("div", { class: "keys one" }, key("IMPORT", "k-dark wide", () => openImport(), { sub: "GOODREADS LIBRARY" })),
     ),
+    canInstall()
+      ? h(
+          "div",
+          { class: "tile t-home span2" },
+          h("small", { text: "📲 GET THE APP" }),
+          h("p", { class: "sync-text", text: "Add Shelfie to your home screen: it opens full-screen like a real app, with no app store and nothing to update." }),
+          h("div", { class: "keys one" }, key("ADD TO HOME SCREEN", "k-dark wide", () => showInstall({ name: state.name }), { sub: "TWO TAPS", aria: "Add Shelfie to your home screen" })),
+        )
+      : null,
     h("h3", { class: "p-h", text: "SETTINGS" }),
     h(
       "div",
@@ -913,6 +935,7 @@ function renderStats() {
       key("⚠", "k-red", () => resetFlow(), { sub: "RESET ALL", aria: "Reset all data" }),
     ),
     h("p", { class: "p-note", text: "IPHONE ON SILENT? SOUNDS FOLLOW THE SILENT SWITCH; HAPTICS STILL PLAY." }),
+    chaiCard(state.name),
   );
   if (!prefersReducedMotion()) {
     [...$("#stats-body").querySelectorAll(".tile, .mini")].forEach((t, i) => t.animate([{ transform: "translateY(24px) scale(.94)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 520, delay: Math.min(600, 35 * i), easing: "cubic-bezier(.2,1.3,.4,1)", fill: "backwards" }));
@@ -1069,6 +1092,7 @@ async function resetFlow() {
       { class: "danger-body" },
       h("p", { class: "danger-text", text: "Once your data is deleted, it's gone for good. There's no way to recover it." }),
       sync.on ? h("p", { class: "pop-text", text: "Sync will be switched off on this device. The synced copy stays for your other devices." }) : null,
+      account?.on ? h("p", { class: "pop-text", text: "You'll be logged out on this device. Your account backup stays (log in again to bring it back, or delete the account first to remove it too)." }) : null,
       h("p", { class: "pop-text" }, "To reset, type ", h("b", { class: "danger-word", text: "reset" }), " below."),
     ),
     input: { placeholder: "type reset", max: 12, label: "Type reset to confirm", match: (v) => v.trim().toLowerCase() === "reset" },
@@ -1079,13 +1103,22 @@ async function resetFlow() {
     sound: "error",
   });
   if (res.id !== "reset") return;
-  // Gone: this device's shelves, sync link, tour and tips. Sound/haptic preferences stay.
+  if (account?.on) await account.logout().catch(() => {});
+  wipeDevice({ reset: true });
+}
+
+/**
+ * Gone: this device's shelves, sync link, tour and tips. Sound/haptic preferences stay.
+ * A reset (`reset: true`) also marks the moment, so an older copy synced from elsewhere can't
+ * bring the books back. Clearing after logging out doesn't: logging in again brings them back.
+ */
+function wipeDevice({ reset = false } = {}) {
   sync.disable();
   try {
     // You already know the gestures, so the tour stays seen; the name and import offer come back.
     const keep = new Set(["shelfie.fx", TOUR]);
     for (const k of Object.keys(localStorage)) if (k === S.KEY || k.startsWith(`${S.KEY}.`) || (k.startsWith("shelfie.") && !keep.has(k))) localStorage.removeItem(k);
-    localStorage.setItem(S.KEY, JSON.stringify({ ...S.reset(), toured: true }));
+    localStorage.setItem(S.KEY, JSON.stringify({ ...(reset ? S.reset() : S.empty()), toured: true }));
     sessionStorage.setItem("shelfie.fresh", "1");
   } catch {}
   stats.close();
@@ -1325,6 +1358,302 @@ function syncTile() {
 function renderSyncTile() {
   $("#sync-tile")?.replaceWith(syncTile());
 }
+
+/* ---------------- accounts ---------------- */
+
+// null until we've asked the Worker; then true or false.
+let accountsUp = null;
+async function checkAccounts() {
+  if (accountsUp !== null || !apiBase) return accountsUp;
+  try {
+    const r = await fetch(`${apiBase}/api/health`, { credentials: "omit", cache: "no-store" });
+    accountsUp = !!(await r.json())?.accounts;
+  } catch {
+    return null; // try again next time
+  }
+  if (stats.isOpen) renderStats();
+  return accountsUp;
+}
+
+account = createAccount({
+  base: apiBase,
+  get: () => state,
+  put: (next) => applyIncoming(next),
+  merge: S.merge,
+  onStatus: () => {
+    renderAccountTile();
+    $("#lcd").classList.toggle("synced", (account?.on && account.status.state === "idle") || (sync.on && sync.status.state === "idle"));
+  },
+  onSignedOut: () => island.say({ icon: "🔒", title: "LOGGED OUT", sub: "Your session ended. Log in again to keep backing up.", tone: "violet" }),
+  // A device that was reset remembers when, so an older synced copy can't undo the reset. But
+  // logging in means "bring my account's books here": forget the marker first, or the merge
+  // would empty the account. Books added since the reset are kept.
+  onJoin: () => {
+    if (!state.resetAt) return;
+    state = { ...state, resetAt: 0 };
+    try {
+      localStorage.setItem(S.KEY, JSON.stringify(state));
+    } catch {}
+  },
+});
+
+function renderAccountTile() {
+  if (stats.isOpen) $("#account-tile")?.replaceWith(accountTile());
+}
+
+function accountTile() {
+  const st = account.status;
+  if (accountsUp === false && !account.on) return null;
+  const body = [];
+  if (!account.on) {
+    body.push(
+      h("p", { class: "sync-text", text: "Back up your shelves and open them on any device: phone, laptop, the home-screen app. Encrypted on this device with your password, so not even Shelfie can read your books, and your password never leaves your phone." }),
+      h(
+        "div",
+        { class: "keys two" },
+        key("SIGN UP", "k-lime wide", () => signupFlow(), { sub: "FREE, NO EMAIL NEEDED", aria: "Create an account" }),
+        key("🔐", "k-cream", () => loginFlow(), { sub: "LOG IN", aria: "Log in" }),
+      ),
+      h("button", { type: "button", class: "link-btn", text: "FORGOT YOUR PASSWORD?", on: { click: () => recoverFlow() } }),
+    );
+  } else {
+    const line = st.state === "syncing" ? "BACKING UP…" : st.state === "error" ? `⚠ ${st.error}`.toUpperCase() : `BACKED UP ${ago(st.at)}`;
+    body.push(
+      h("p", { class: "acct-who" }, h("span", { text: "👤" }), h("b", { text: account.user })),
+      h("p", { class: "sync-status" + (st.state === "error" ? " warn" : ""), text: line }),
+      h(
+        "div",
+        { class: "keys three" },
+        key("↻", "k-blue", () => account.now(), { sub: "SYNC NOW", aria: "Back up now" }),
+        key("🔑", "k-cream", () => passwordFlow(), { sub: "PASSWORD", aria: "Change password" }),
+        key("⏻", "k-cream", () => logoutFlow(), { sub: "LOG OUT", aria: "Log out" }),
+      ),
+      h(
+        "div",
+        { class: "acct-more" },
+        h("button", { type: "button", class: "link-btn", text: "LOG OUT EVERYWHERE", on: { click: () => logoutFlow({ all: true }) } }),
+        h("button", { type: "button", class: "link-btn danger", text: "DELETE ACCOUNT", on: { click: () => deleteFlow() } }),
+      ),
+    );
+  }
+  return h("div", { class: `tile t-account span2${account.on ? " on" : ""}`, id: "account-tile" }, h("small", { text: account.on ? "🔒 YOUR ACCOUNT · END-TO-END ENCRYPTED" : "🔒 ACCOUNT · END-TO-END ENCRYPTED" }), ...body);
+}
+
+/** The strength bar under a new password. */
+function meter() {
+  const el = h("div", { class: "pw-meter", "aria-hidden": "true" }, h("i"), h("i"), h("i"), h("i"), h("small", { text: "" }));
+  const words = ["TOO WEAK", "WEAK", "OKAY", "GOOD", "STRONG"];
+  el.update = (pw) => {
+    const n = pw ? strength(pw) : -1;
+    el.dataset.n = String(n);
+    el.querySelector("small").textContent = n < 0 ? "10+ CHARACTERS. A FEW RANDOM WORDS WORK GREAT." : words[n];
+  };
+  el.update("");
+  return el;
+}
+
+const LOGIN_FIELD = { name: "login", placeholder: "Username or email", autocomplete: "username", label: "Username or email", max: 254, inputmode: "email" };
+
+async function signupFlow() {
+  if (!(await checkAccounts())) return notReady();
+  const m = meter();
+  const res = await popup({
+    tone: "lime",
+    icon: "🔐",
+    title: "MAKE AN ACCOUNT",
+    text: "Pick a username (or use your email; we never send you anything). Your password locks your shelves on this device before anything is backed up.",
+    after: m,
+    fields: [LOGIN_FIELD, { name: "password", type: "password", placeholder: "Password", autocomplete: "new-password", label: "New password" }, { name: "again", type: "password", placeholder: "Password again", autocomplete: "new-password", label: "Password again", enter: "done" }],
+    onInput: (v) => m.update(v.password),
+    actions: [
+      { id: "cancel", label: "NOT NOW", cancel: true },
+      { id: "go", label: "CREATE", primary: true, busy: "LOCKING…" },
+    ],
+    submit: async (v) => {
+      const login = cleanLogin(v.login);
+      if (!login) throw new Error("Use a username (3 to 32 letters, numbers, dots, dashes or underscores) or an email address.");
+      const problem = passwordProblem(v.password, login);
+      if (problem) throw new Error(problem);
+      if (v.password !== v.again) throw new Error("The two passwords don't match.");
+      return account.signup(login, v.password);
+    },
+  });
+  if (res.id !== "go") return;
+  if (sync.on) sync.disable(); // the account takes over from the sync code
+  feel("levelup", "success");
+  rain({ count: 120, emoji: ["🔐", "📚", "✨"] });
+  await showRecovery(res.result);
+  island.say({ icon: "🔐", title: "ACCOUNT MADE", sub: `${state.books.length} books backed up, encrypted`, tone: "lime" });
+  if (stats.isOpen) renderStats();
+}
+
+/** The recovery code, once. Confirmed by typing its last four characters. */
+async function showRecovery(code) {
+  const last = code.slice(-4);
+  const copy = h("button", { type: "button", class: "install-go quiet", text: "⧉ COPY CODE" });
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      copy.textContent = "COPIED ✓ NOW PASTE IT SOMEWHERE SAFE";
+    } catch {
+      copy.textContent = "WRITE IT DOWN INSTEAD";
+    }
+  });
+  await popup({
+    tone: "yellow",
+    icon: "🛟",
+    title: "YOUR RECOVERY CODE",
+    body: h(
+      "div",
+      { class: "danger-body" },
+      h("p", { class: "pop-text", text: "If you ever forget your password, this code is the only way back in. We can't reset it for you: we can't read your account, that's the point." }),
+      h("p", { class: "recovery-code", text: code }),
+      copy,
+      h("p", { class: "pop-text", text: `Save it in your password manager or notes. To confirm, type its last 4 characters (${"•".repeat(4)}).` }),
+    ),
+    input: { placeholder: "Last 4 characters", max: 4, label: "Last four characters of the recovery code", capitalize: "characters", match: (v) => v.trim().toUpperCase() === last },
+    actions: [{ id: "ok", label: "I'VE SAVED IT", primary: true }],
+    dismissable: false,
+  });
+}
+
+async function loginFlow() {
+  if (!(await checkAccounts())) return notReady();
+  const res = await popup({
+    tone: "cyan",
+    icon: "👋",
+    title: "WELCOME BACK",
+    text: "Log in and your shelves join the ones on this device (nothing here is lost).",
+    fields: [LOGIN_FIELD, { name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "go" }],
+    actions: [
+      { id: "forgot", label: "FORGOT?" },
+      { id: "go", label: "LOG IN", primary: true, busy: "UNLOCKING…" },
+    ],
+    submit: (v) => account.login(v.login, v.password),
+  });
+  if (res.id === "forgot") return recoverFlow();
+  if (res.id !== "go") return;
+  if (sync.on) sync.disable();
+  feel("fanfare", "celebrate");
+  rain({ count: 100, emoji: ["📚", "🔓"] });
+  island.say({ icon: "🔓", title: `HI ${account.user.split("@")[0].toUpperCase().slice(0, 14)}`, sub: `${state.books.length} books on your shelves`, tone: "lime" });
+  if (stats.isOpen) renderStats();
+}
+
+async function recoverFlow() {
+  if (!(await checkAccounts())) return notReady();
+  const m = meter();
+  const res = await popup({
+    tone: "orange",
+    icon: "🛟",
+    title: "FORGOT YOUR PASSWORD?",
+    text: "Use the recovery code you saved when you made your account, and pick a new password. Other devices will be logged out.",
+    after: m,
+    fields: [
+      LOGIN_FIELD,
+      { name: "code", placeholder: "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX", label: "Recovery code", capitalize: "characters", max: 40 },
+      { name: "password", type: "password", placeholder: "New password", autocomplete: "new-password", label: "New password" },
+      { name: "again", type: "password", placeholder: "New password again", autocomplete: "new-password", label: "New password again", enter: "done" },
+    ],
+    onInput: (v) => m.update(v.password),
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      { id: "go", label: "RESET IT", primary: true, busy: "UNLOCKING…" },
+    ],
+    submit: async (v) => {
+      if (v.password !== v.again) throw new Error("The two passwords don't match.");
+      return account.recover(v.login, v.code, v.password);
+    },
+  });
+  if (res.id !== "go") return;
+  if (sync.on) sync.disable();
+  feel("fanfare", "celebrate");
+  island.say({ icon: "🛟", title: "NEW PASSWORD SET", sub: "Your recovery code still works", tone: "lime" });
+  if (stats.isOpen) renderStats();
+}
+
+async function passwordFlow() {
+  const m = meter();
+  const res = await popup({
+    tone: "lime",
+    icon: "🔑",
+    title: "CHANGE PASSWORD",
+    text: "Your other devices will be logged out. Your recovery code stays the same.",
+    after: m,
+    fields: [
+      { name: "user", type: "text", value: account.user, autocomplete: "username", label: "Username", max: 254 },
+      { name: "old", type: "password", placeholder: "Current password", autocomplete: "current-password", label: "Current password" },
+      { name: "password", type: "password", placeholder: "New password", autocomplete: "new-password", label: "New password" },
+      { name: "again", type: "password", placeholder: "New password again", autocomplete: "new-password", label: "New password again", enter: "done" },
+    ],
+    onInput: (v) => m.update(v.password),
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      { id: "go", label: "CHANGE IT", primary: true, busy: "LOCKING…" },
+    ],
+    submit: async (v) => {
+      if (v.password !== v.again) throw new Error("The two passwords don't match.");
+      return account.changePassword(v.old, v.password);
+    },
+  });
+  if (res.id === "go") island.say({ icon: "🔑", title: "PASSWORD CHANGED", sub: "Other devices were logged out", tone: "lime" });
+}
+
+async function logoutFlow({ all = false } = {}) {
+  const choice = await popup({
+    tone: "cream",
+    icon: "⏻",
+    title: all ? "LOG OUT EVERYWHERE?" : "LOG OUT?",
+    text: all
+      ? "Every device logs out, including this one. Your backup stays safe in your account."
+      : "Your backup stays safe in your account. On a phone that isn't yours, clear this device too.",
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      { id: "clear", label: "LOG OUT & CLEAR" },
+      { id: "out", label: "LOG OUT", primary: true },
+    ],
+  });
+  if (choice !== "out" && choice !== "clear") return;
+  await account.logout({ all });
+  if (choice === "clear") return wipeDevice();
+  island.say({ icon: "👋", title: "LOGGED OUT", sub: "Your shelves are still on this device", tone: "violet" });
+  if (stats.isOpen) renderStats();
+}
+
+async function deleteFlow() {
+  const res = await popup({
+    tone: "danger",
+    danger: true,
+    icon: "⚠",
+    title: "DELETE YOUR ACCOUNT?",
+    body: h(
+      "div",
+      { class: "danger-body" },
+      h("p", { class: "danger-text", text: "This deletes your account and its backup for good. It can't be undone, and not even we can bring it back." }),
+      h("p", { class: "pop-text", text: "Your shelves stay on this device. Enter your password to confirm." }),
+    ),
+    fields: [
+      { name: "user", type: "text", value: account.user, autocomplete: "username", label: "Username", max: 254 },
+      { name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "done" },
+    ],
+    actions: [
+      { id: "cancel", label: "KEEP IT", cancel: true },
+      { id: "go", label: "DELETE IT", primary: true, danger: true, busy: "DELETING…" },
+    ],
+    sound: "error",
+    submit: (v) => account.deleteAccount(v.password),
+  });
+  if (res.id !== "go") return;
+  feel("drop", "error");
+  shake(document.body, 10);
+  island.say({ icon: "🗑️", title: "ACCOUNT DELETED", sub: "Your shelves are still on this device", tone: "violet" });
+  if (stats.isOpen) renderStats();
+}
+
+function notReady() {
+  popup({ tone: "cream", icon: "🚧", title: "ACCOUNTS ARE COMING", text: "Accounts aren't switched on yet (or the server can't be reached right now). Your shelves are safe on this device; a sync code works in the meantime." });
+}
+
 
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -1645,7 +1974,7 @@ function tutorialDone(finished) {
   } catch {}
   const first = !state.toured;
   if (first) state = S.save(globalThis.localStorage, { ...state, toured: true, seen: true });
-  sync.soon();
+  backupSoon();
   if (first) setTimeout(onboard, finished ? 900 : 300);
 }
 
@@ -1683,23 +2012,15 @@ async function bringBooks() {
     tone: "pink",
     icon: "🧳",
     title: "BRING YOUR BOOKS?",
-    text: "Coming from Goodreads? Import your whole library: what you've read (with dates and ratings), what you're reading, and your want-to-read. Using Shelfie on another device? Link it with your sync code.",
+    text: "Coming from Goodreads? Import your whole library: what you've read (with dates and ratings), what you're reading, and your want-to-read. Already have a Shelfie account? Log in and your shelves come with you.",
     actions: [
       { id: "later", label: "START FRESH", cancel: true },
-      { id: "sync", label: "SYNC CODE" },
+      { id: "sync", label: "LOG IN" },
       { id: "gr", label: "GOODREADS", primary: true },
     ],
   });
   if (choice === "gr") openImport();
-  if (choice === "sync") {
-    stats.open();
-    linking = true;
-    setTimeout(() => {
-      renderSyncTile();
-      $("#sync-tile")?.scrollIntoView({ block: "center", behavior: "smooth" });
-      $("#sync-code")?.focus();
-    }, 450);
-  }
+  if (choice === "sync") loginFlow();
 }
 
 $("#help").addEventListener("click", async () => {
@@ -1757,6 +2078,62 @@ function introTips() {
   tip({ id: "pull", el: () => $("#pullbar"), tone: "cyan", title: "PULL ME UP", text: "Stats, daily / monthly / yearly goals, stickers, sync, Goodreads import and settings live down here." });
 }
 
+/* ---------------- home screen ---------------- */
+
+// Counted per device: the offer comes on a later visit, never on the first one.
+let visits = 0;
+try {
+  visits = Number(localStorage.getItem("shelfie.visits") || 0) + 1;
+  localStorage.setItem("shelfie.visits", String(visits));
+} catch {}
+if (visits >= 2 && state.toured)
+  setTimeout(() => {
+    if (!shouldOffer() || touring() || popping() || stats.isOpen || add.isOpen || imp.isOpen || posterUp || document.querySelector(".tip")) return;
+    markOffered();
+    showInstall({ name: state.name });
+  }, 6000);
+
+/* ---------------- idle fidgets ---------------- */
+
+// While the app is open and you're just looking, it doesn't freeze: every so often something
+// does a little something. Each one is a short, composited animation, so it costs next to nothing.
+let lastInput = performance.now();
+for (const ev of ["pointerdown", "keydown", "wheel"]) addEventListener(ev, () => (lastInput = performance.now()), { capture: true, passive: true });
+const FIDGETS = [
+  () => {
+    const el = deck.top?.el;
+    if (!el || el.classList.contains("flipped")) return;
+    el.querySelector(".face.front")?.animate(
+      [{ transform: "none" }, { transform: "rotate(-3deg) translateY(-6px)" }, { transform: "rotate(2deg)" }, { transform: "none" }],
+      { duration: 900, easing: "cubic-bezier(.3,1.4,.5,1)" },
+    );
+  },
+  () => {
+    const r = $(".dock .knob-ring");
+    if (!r) return;
+    r.classList.remove("fidget");
+    void r.offsetWidth;
+    r.classList.add("fidget");
+  },
+  () => {
+    const w = $("#tape [aria-selected='true']");
+    w?.animate([{ transform: "none" }, { transform: "translateY(-8px) rotate(-2deg)" }, { transform: "none" }], { duration: 700, easing: "cubic-bezier(.3,1.5,.5,1)" });
+  },
+  () => liquid?.splash(0.25, Math.random()),
+  () => [...$("#dock").querySelectorAll(".key")].slice(0, 4).forEach((k, i) =>
+    k.animate([{ transform: "none" }, { transform: "translateY(-5px)" }, { transform: "none" }], { duration: 420, delay: i * 70, easing: "ease-out" }),
+  ),
+];
+let fidgetN = 0;
+setInterval(() => {
+  if (prefersReducedMotion() || document.visibilityState !== "visible") return;
+  if (performance.now() - lastInput < 9000 || deck.dragging || touring() || popping() || stats.isOpen || add.isOpen || imp.isOpen || posterUp) return;
+  if (Math.random() < 0.35) return; // not like clockwork
+  FIDGETS[fidgetN++ % FIDGETS.length]();
+  // Now and then, after a longer quiet spell, a line from the island.
+  if (performance.now() - lastInput > 45000 && Math.random() < 0.25) island.say({ icon: "📖", title: Q.greeting(state.name).toUpperCase(), sub: "Still here when you're ready", tone: "lime", buzz: false });
+}, 6000);
+
 /* ---------------- visitors ---------------- */
 
 const critters = createCritters({
@@ -1776,6 +2153,7 @@ if (!hints.has("stats")) setTimeout(() => !stats.isOpen && stats.peek(), 2600);
 // Exposed for the browser tests.
 globalThis.__shelfie = {
   critters,
+  backupNow: () => (account?.on ? account.now() : sync.now()),
   get state() {
     return state;
   },

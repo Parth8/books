@@ -8,7 +8,8 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { cleanGoogle } from "../worker/worker.js";
+import worker, { cleanGoogle } from "../worker/worker.js";
+import { FakeD1 } from "./helpers/d1.mjs";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
@@ -41,9 +42,23 @@ function fakeSync(store) {
   };
 }
 
+/**
+ * The real Worker (accounts and all) running right here, on a test database. With `accounts`
+ * off it answers like a Worker that has no database set up.
+ */
+function realWorker(accountsEnv) {
+  return async (r) => {
+    const req = r.request();
+    const headers = { ...req.headers(), "cf-connecting-ip": "10.0.0.1" };
+    const res = await worker.fetch(new Request(req.url(), { method: req.method(), headers, body: ["GET", "HEAD"].includes(req.method()) ? undefined : req.postData() }), accountsEnv, { waitUntil: () => {} });
+    return r.fulfill({ status: res.status, headers: Object.fromEntries(res.headers), body: await res.text() });
+  };
+}
+const accountsEnv = (on) => ({ ALLOWED_ORIGINS: new URL(SITE).origin, ...(on ? { DB: new FakeD1(), AUTH_SECRET: "e2e-auth-secret-NOT-REAL-0123456789abcdef" } : {}) });
+
 const TIPS = ["stamp", "addstamp", "pad", "padwant", "padread", "tape", "lcd", "pull"];
 
-async function setup(page, { google = "ok", tour = false, tips = false, store = new Map() } = {}) {
+async function setup(page, { google = "ok", tour = false, tips = false, store = new Map(), accounts = accountsEnv(false) } = {}) {
   const cors = { "access-control-allow-origin": "*" };
   if (!tour) await page.addInitScript(() => localStorage.setItem("shelfie.tour", "1"));
   // Explainer pop-ups and wandering animals would get in the way of the gestures under test.
@@ -51,6 +66,7 @@ async function setup(page, { google = "ok", tour = false, tips = false, store = 
     ([tips, ids]) => {
       if (!tips && !localStorage.getItem("shelfie.tips")) localStorage.setItem("shelfie.tips", JSON.stringify(ids));
       if (!localStorage.getItem("shelfie.fx")) localStorage.setItem("shelfie.fx", JSON.stringify({ visitors: false }));
+      if (!localStorage.getItem("shelfie.a2hs")) localStorage.setItem("shelfie.a2hs", JSON.stringify({ n: 2, at: Date.now() }));
     },
     [tips, TIPS],
   );
@@ -58,6 +74,8 @@ async function setup(page, { google = "ok", tour = false, tips = false, store = 
     google === "ok" ? r.fulfill({ contentType: "application/json", body: WORKER_GOOGLE, headers: cors }) : r.fulfill({ status: 503, contentType: "application/json", body: '{"error":"upstream_unavailable"}', headers: cors }),
   );
   await page.route(`${WORKER}/api/sync/**`, fakeSync(store));
+  for (const path of ["/api/health", "/api/auth/**", "/api/vault"]) await page.route(`${WORKER}${path}`, realWorker(accounts));
+  await page.route(`${WORKER}/api/cover*`, (r) => r.fulfill({ contentType: "application/json", body: '{"img":null}', headers: cors }));
   await page.route("https://www.googleapis.com/**", () => {
     throw new Error("the page must never call Google's API directly");
   });
@@ -345,7 +363,7 @@ await run("search Google Books: tap adds to this shelf, swipe picks one", async 
   assert.equal(s.books[0].title, "Dune");
   assert.equal(s.books[0].shelf, "reading", "a tap adds to the shelf search was opened from");
   assert.equal(s.books[0].pages, 535);
-  assert.equal(s.books[0].img, "https://books.google.com/books/content?id=B1hSG45JCX4C&printsec=frontcover&img=1&zoom=1&fife=w480-h720&source=gbs_api");
+  assert.equal(s.books[0].img, "https://books.google.com/books/content?id=B1hSG45JCX4C&printsec=frontcover&img=1&zoom=1&fife=w720-h1080&source=gbs_api");
   assert.equal(s.books[0].blurb, "Set on the desert planet Arrakis, Dune is the story of the boy Paul Atreides.");
   // Swipe the second row past the Reading mark.
   const r = await center(page.locator(".row").nth(1));
@@ -632,6 +650,128 @@ await run("explainer pop-ups point at things once, then stay away", async (page)
   await page.waitForTimeout(1800);
   assert.equal(await page.locator(".tip").count(), 0);
 }, { tips: true });
+
+async function device(accounts) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await setup(page, { accounts });
+  await page.goto(SITE);
+  await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+  return { ctx, page, errors };
+}
+
+await run("accounts: sign up, save the recovery code, log in on another device, shelves follow", async () => {
+  const env = accountsEnv(true);
+  const a = await device(env);
+  const b = await device(env);
+  try {
+    await starter(a.page);
+    await a.page.click("#pullbar");
+    await a.page.waitForSelector("#account-tile");
+    assert.equal(await a.page.locator("#sync-tile").count(), 0, "with accounts on, the sync code steps aside");
+    await a.page.click('#account-tile .key[aria-label="Create an account"]');
+    await a.page.fill('.pop input[name="login"]', "Ada.Reads");
+    await a.page.fill('.pop input[name="password"]', "short");
+    await a.page.fill('.pop input[name="again"]', "short");
+    await a.page.click('.pop-btn[data-id="go"]');
+    await a.page.waitForSelector(".pop-error:not(:empty)");
+    assert.match(await a.page.textContent(".pop-error"), /10 characters/);
+    await a.page.fill('.pop input[name="password"]', "tea and long books");
+    await a.page.fill('.pop input[name="again"]', "tea and long books");
+    assert.ok(Number(await a.page.getAttribute(".pw-meter", "data-n")) >= 2);
+    await a.page.click('.pop-btn[data-id="go"]');
+    await a.page.waitForSelector(".recovery-code", { timeout: 20000 });
+    const code = (await a.page.textContent(".recovery-code")).trim();
+    assert.match(code, /^([A-Z2-9]{4}-){5}[A-Z2-9]{4}$/);
+    await a.page.fill(".pop-input", "nope");
+    assert.ok(await a.page.isDisabled('.pop-btn[data-id="ok"]'), "needs the last four characters");
+    await a.page.fill(".pop-input", code.slice(-4).toLowerCase());
+    await a.page.click('.pop-btn[data-id="ok"]');
+    await a.page.waitForSelector(".pop", { state: "detached" });
+    await a.page.waitForFunction(() => /BACKED UP/.test(document.querySelector("#account-tile")?.textContent || ""));
+    assert.match(await a.page.textContent("#account-tile"), /ada\.reads/);
+    // Nothing readable reached the server.
+    const dump = JSON.stringify([env.DB.rows("SELECT * FROM users"), env.DB.rows("SELECT * FROM vaults")]);
+    for (const leak of ["ada.reads", "tea and long books", "Dune", "Hitchhiker", code]) assert.ok(!dump.includes(leak), `server has ${leak}`);
+
+    // Another device: a wrong password stays in the pop-up with a message; the right one brings the books.
+    await b.page.click("#pullbar");
+    await b.page.click('#account-tile .key[aria-label="Log in"]');
+    await b.page.fill('.pop input[name="login"]', "ada.reads");
+    await b.page.fill('.pop input[name="password"]', "tea and short books");
+    await b.page.click('.pop-btn[data-id="go"]');
+    await b.page.waitForSelector(".pop-error:not(:empty)", { timeout: 20000 });
+    assert.match(await b.page.textContent(".pop-error"), /don't match/);
+    await b.page.fill('.pop input[name="password"]', "tea and long books");
+    await b.page.click('.pop-btn[data-id="go"]');
+    await b.page.waitForFunction(() => globalThis.__shelfie.state.books.length === 8, null, { timeout: 20000 });
+
+    // A change on B reaches A.
+    await b.page.keyboard.press("Escape");
+    await b.page.waitForTimeout(500);
+    const xpBefore = await b.page.evaluate(() => globalThis.__shelfie.state.xp);
+    await b.page.click('.dock .key:has-text("+25")');
+    await b.page.waitForFunction((x) => globalThis.__shelfie.state.xp > x, xpBefore);
+    await b.page.evaluate(() => globalThis.__shelfie.backupNow());
+    const want = await b.page.evaluate(() => globalThis.__shelfie.state.xp);
+    await a.page.evaluate(() => globalThis.__shelfie.backupNow());
+    await a.page.waitForFunction((x) => globalThis.__shelfie.state.xp === x, want, { timeout: 15000 });
+    assert.deepEqual([...a.errors, ...b.errors], []);
+  } finally {
+    await a.ctx.close();
+    await b.ctx.close();
+  }
+}, { raw: true });
+
+await run("accounts: forgot password with the recovery code, then log out and clear the device", async () => {
+  const env = accountsEnv(true);
+  const a = await device(env);
+  try {
+    await starter(a.page);
+    await a.page.click("#pullbar");
+    await a.page.click('#account-tile .key[aria-label="Create an account"]');
+    await a.page.fill('.pop input[name="login"]', "grace@example.com");
+    await a.page.fill('.pop input[name="password"]', "compilers are fun");
+    await a.page.fill('.pop input[name="again"]', "compilers are fun");
+    await a.page.click('.pop-btn[data-id="go"]');
+    await a.page.waitForSelector(".recovery-code", { timeout: 20000 });
+    const code = (await a.page.textContent(".recovery-code")).trim();
+    await a.page.fill(".pop-input", code.slice(-4));
+    await a.page.click('.pop-btn[data-id="ok"]');
+    await a.page.waitForFunction(() => /BACKED UP/.test(document.querySelector("#account-tile")?.textContent || ""));
+    // Log out, clearing this device.
+    await a.page.click('#account-tile .key[aria-label="Log out"]');
+    await a.page.click('.pop-btn[data-id="clear"]');
+    await a.page.waitForEvent("load");
+    await a.page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+    assert.equal(await a.page.evaluate(() => globalThis.__shelfie.state.books.length), 0);
+    await a.page.evaluate(() => document.querySelector(".pop-btn[data-id='skip']")?.click());
+    await a.page.waitForTimeout(400);
+    await a.page.evaluate(() => document.querySelector(".pop-btn[data-id='later']")?.click());
+    await a.page.waitForSelector(".pop", { state: "detached" });
+    // Even a device that was reset (it remembers when) gets the account's books back on login.
+    await a.page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("shelf.v1"));
+      localStorage.setItem("shelf.v1", JSON.stringify({ ...s, resetAt: Date.now() }));
+    });
+    await a.page.reload();
+    await a.page.waitForFunction(() => globalThis.__shelfie?.state.resetAt > 0);
+    // Forgot the password: the recovery code sets a new one and the books come back.
+    await a.page.click("#pullbar");
+    await a.page.click('#account-tile .link-btn:has-text("FORGOT")');
+    await a.page.fill('.pop input[name="login"]', "Grace@Example.com");
+    await a.page.fill('.pop input[name="code"]', code.toLowerCase().replace(/-/g, " "));
+    await a.page.fill('.pop input[name="password"]', "a new secret phrase");
+    await a.page.fill('.pop input[name="again"]', "a new secret phrase");
+    await a.page.click('.pop-btn[data-id="go"]');
+    await a.page.waitForFunction(() => globalThis.__shelfie.state.books.length === 8, null, { timeout: 20000 });
+    assert.deepEqual(a.errors, []);
+  } finally {
+    await a.ctx.close();
+  }
+}, { raw: true });
 
 await run(
   "full motion: starter, swipe, scrub, lift, posters, panels",

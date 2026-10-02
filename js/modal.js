@@ -39,7 +39,7 @@ function next() {
   });
 }
 
-function show({ tone = "lime", icon = null, title = "", text = "", body = null, actions = [{ id: "ok", label: "GOT IT", primary: true }], input = null, danger = false, dismissable = true, sound = "pop" }) {
+function show({ tone = "lime", icon = null, title = "", text = "", body = null, actions = [{ id: "ok", label: "GOT IT", primary: true }], input = null, danger = false, dismissable = true, sound = "pop", hook = null, fields = null, submit = null, onInput = null, after = null }) {
   return new Promise((resolve) => {
     const [bg, ink] = TONES[tone] || TONES.lime;
     const field = input
@@ -56,6 +56,37 @@ function show({ tone = "lime", icon = null, title = "", text = "", body = null, 
           enterkeyhint: "done",
         })
       : null;
+    // A form (several fields): a real <form> with autocomplete hints, so password managers
+    // can fill and save logins. Values come back as { id, values } (and `result` from submit).
+    const inputs = (fields || []).map((f) => {
+      const el = h("input", {
+        class: "pop-input",
+        type: f.type || "text",
+        name: f.name,
+        autocomplete: f.autocomplete || "off",
+        autocapitalize: f.capitalize || "off",
+        spellcheck: "false",
+        maxLength: f.max || 128,
+        placeholder: f.placeholder || "",
+        value: f.value || "",
+        "aria-label": f.label || f.placeholder || f.name,
+        inputmode: f.inputmode || null,
+        enterkeyhint: f.enter || "next",
+      });
+      if (f.type !== "password") return { f, el, row: el };
+      const eye = h("button", { type: "button", class: "pop-eye", "aria-label": "Show password", text: "👁" });
+      eye.addEventListener("click", () => {
+        const show = el.type === "password";
+        el.type = show ? "text" : "password";
+        eye.setAttribute("aria-label", show ? "Hide password" : "Show password");
+        eye.classList.toggle("on", show);
+        el.focus();
+      });
+      return { f, el, row: h("div", { class: "pop-pw" }, el, eye) };
+    });
+    const values = () => Object.fromEntries(inputs.map(({ f, el }) => [f.name, el.value]));
+    const error = fields ? h("p", { class: "pop-error", role: "alert" }) : null;
+    const form = fields ? h("form", { class: "pop-form", novalidate: true }, inputs.map((i) => i.row)) : null;
     const buttons = actions.map((a) =>
       h("button", { type: "button", class: `pop-btn${a.primary ? " primary" : ""}${a.danger ? " danger" : ""}`, "data-id": a.id, text: a.label }),
     );
@@ -67,6 +98,9 @@ function show({ tone = "lime", icon = null, title = "", text = "", body = null, 
       text ? h("p", { class: "pop-text", text }) : null,
       body,
       field,
+      form,
+      after,
+      error,
       h("div", { class: "pop-actions" }, buttons),
     );
     const wrap = h("div", { class: "pop", popover: "manual" }, h("div", { class: "pop-dim" }), card);
@@ -91,33 +125,73 @@ function show({ tone = "lime", icon = null, title = "", text = "", body = null, 
     };
     field?.addEventListener("input", refresh);
     refresh();
+    for (const { el } of inputs) el.addEventListener("input", () => {
+      if (error) error.textContent = "";
+      onInput?.(values(), card);
+    });
 
     let done = false;
-    const close = (id) => {
-      if (done) return;
+    let working = false;
+    const shake = () => {
+      feel("error", "error");
+      if (!prefersReducedMotion()) card.animate([{ transform: "translateX(-10px)" }, { transform: "translateX(10px)" }, { transform: "translateX(-6px)" }, { transform: "none" }], { duration: 320 });
+    };
+    const close = async (id) => {
+      if (done || working) return;
       const a = actions.find((x) => x.id === id);
-      if (a?.primary && input?.match && !input.match(field.value)) {
-        feel("error", "error");
-        if (!prefersReducedMotion()) card.animate([{ transform: "translateX(-10px)" }, { transform: "translateX(10px)" }, { transform: "translateX(-6px)" }, { transform: "none" }], { duration: 320 });
-        return;
+      let result;
+      if (a?.primary && input?.match && !input.match(field.value)) return shake();
+      if (a?.primary && submit) {
+        // Do the work with the pop-up still open: errors show here, and you can fix and retry.
+        const btn = buttons.find((b) => b.dataset.id === id);
+        const label = btn.textContent;
+        working = true;
+        btn.disabled = true;
+        btn.classList.add("busy");
+        btn.textContent = a.busy || "ONE MOMENT…";
+        card.classList.add("working");
+        try {
+          result = await submit(values());
+        } catch (err) {
+          working = false;
+          btn.disabled = false;
+          btn.classList.remove("busy");
+          btn.textContent = label;
+          card.classList.remove("working");
+          if (error) error.textContent = String(err?.message || err);
+          shake();
+          return;
+        }
+        working = false;
       }
       done = true;
       const value = field ? field.value : undefined;
       const finish = () => {
         wrap.remove();
         if (app) app.inert = !!wasInert;
-        resolve(input ? { id, value } : id);
+        resolve(fields ? { id, values: values(), result } : input ? { id, value } : id);
       };
       if (prefersReducedMotion()) return finish();
       card.animate([{ transform: "none", opacity: 1 }, { transform: "scale(.85) translateY(20px)", opacity: 0 }], { duration: 200, easing: "ease-in", fill: "forwards" });
       wrap.firstChild.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: "forwards" }).finished.then(finish, finish);
     };
     for (const b of buttons) b.addEventListener("click", () => close(b.dataset.id));
+    // Content inside the pop-up (a button in its body) can close it with an id of its own.
+    hook?.((id) => {
+      if (!actions.some((x) => x.id === id)) actions.push({ id });
+      close(id);
+    });
     const cancelId = actions.find((a) => a.cancel)?.id || (dismissable ? "dismiss" : null);
     wrap.firstChild.addEventListener("click", () => cancelId && close(cancelId));
     wrap.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && cancelId) close(cancelId);
-      if (e.key === "Enter" && (e.target === field || !field)) {
+      if (e.key === "Enter" && fields && e.target.tagName === "INPUT") {
+        // Enter moves to the next field, and submits from the last one.
+        e.preventDefault();
+        const k = inputs.findIndex((i) => i.el === e.target);
+        if (k >= 0 && k < inputs.length - 1) inputs[k + 1].el.focus();
+        else close(primary.id);
+      } else if (e.key === "Enter" && !fields && (e.target === field || !field)) {
         e.preventDefault();
         close(primary.id);
       }
@@ -129,6 +203,10 @@ function show({ tone = "lime", icon = null, title = "", text = "", body = null, 
         else if (!e.shiftKey && k === f.length - 1) (e.preventDefault(), f[0].focus());
       }
     });
-    setTimeout(() => (field || buttons.find((b) => b.dataset.id === primary.id) || buttons[0])?.focus({ preventScroll: true }), 60);
+    form?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      close(primary.id);
+    });
+    setTimeout(() => (inputs.find((i) => !i.el.value)?.el || inputs[0]?.el || field || buttons.find((b) => b.dataset.id === primary.id) || buttons[0])?.focus({ preventScroll: true }), 60);
   });
 }

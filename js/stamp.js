@@ -6,6 +6,7 @@
 // loading, shows generated art: a grainy gradient with a bold shape, picked from the title so
 // the same book always looks the same.
 
+import { knownHd, findHd, srcsetOf, sized } from "./covers.js";
 import { h, svg, rng } from "./util.js";
 
 // [background, colour, accent, liquid that stands out against both]
@@ -95,21 +96,45 @@ export function safeCover(url) {
 
 export function coverOf(book) {
   if (safeCover(book.img)) return book.img;
+  const hd = knownHd(book.isbn);
+  if (hd) return hd;
   if (Number.isInteger(book.cover)) return `https://covers.openlibrary.org/b/id/${book.cover}-L.jpg?default=false`;
   // Imported books often only have an ISBN: Open Library has covers by ISBN too.
   if (typeof book.isbn === "string" && /^[\dX]{10,13}$/.test(book.isbn)) return `https://covers.openlibrary.org/b/isbn/${book.isbn}-L.jpg?default=false`;
   return null;
 }
 
+function coverImg(src) {
+  const img = h("img", { alt: "", decoding: "async", draggable: false, referrerPolicy: "no-referrer" });
+  const set = srcsetOf(src);
+  if (set) {
+    img.srcset = set;
+    img.sizes = "(min-width: 700px) 420px, 75vw";
+  }
+  img.src = set ? sized(src, 720) : src;
+  img.addEventListener("load", () => (img.naturalWidth < 10 ? img.remove() : img.classList.add("in")), { once: true });
+  return img;
+}
+
 /** The picture: generated art underneath, the real cover fading in on top once it loads. */
 export function picture(book) {
   const wrap = h("div", { class: "pic" }, svg(artSvg(book.seed)), h("span", { class: "pic-title", text: book.title }));
   const src = coverOf(book);
+  let img = null;
   if (src) {
-    const img = h("img", { src, alt: "", decoding: "async", draggable: false, referrerPolicy: "no-referrer" });
+    img = coverImg(src);
     img.addEventListener("error", () => img.remove(), { once: true });
-    img.addEventListener("load", () => (img.naturalWidth < 10 ? img.remove() : img.classList.add("in")), { once: true });
     wrap.append(img);
+  }
+  // No Google cover yet, but an ISBN: look for a sharp one, and swap it in when it arrives.
+  if (!safeCover(book.img)?.startsWith("https://books.google") && book.isbn && knownHd(book.isbn) === undefined) {
+    findHd(book.isbn).then((hd) => {
+      if (!hd || !wrap.isConnected) return;
+      const next = coverImg(hd);
+      next.addEventListener("load", () => img?.remove(), { once: true });
+      next.addEventListener("error", () => next.remove(), { once: true });
+      wrap.append(next);
+    });
   }
   return wrap;
 }

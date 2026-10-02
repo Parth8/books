@@ -19,7 +19,7 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
   let t0 = performance.now();
   let alive = true;
   let calm = 0;
-  let awakeUntil = performance.now() + 2500; // the idle ripple runs a little after each touch, then rests
+  let idleTimer = 0;
   const lvl = new Spring(level, { stiffness: 120, damping: 18, onChange: () => run() });
 
   function size() {
@@ -34,7 +34,8 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
   function frame(t) {
     raf = 0;
     if (!alive) return;
-    if (!w) size();
+
+    if (!w) return; // not laid out yet (or hidden): the ResizeObserver starts it once it has a size
     const reduced = prefersReducedMotion();
     // Waves: each point springs back to flat and pulls its neighbours along.
     let energy = 0;
@@ -61,9 +62,8 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
       const pts = [];
       for (let i = 0; i < N; i++) {
         const x = (i / (N - 1)) * w;
-        // The idle ripple fades out as the liquid goes to rest, so the last frame is flat and still.
-        const fade = Math.max(0, Math.min(1, (awakeUntil - t) / 800));
-        const idle = reduced ? 0 : (Math.sin(time * 2.2 + i * 0.45) * 2.2 + Math.sin(time * 1.3 - i * 0.3) * 1.4) * fade;
+        // A gentle idle ripple, always: the liquid never looks frozen.
+        const idle = reduced ? 0 : Math.sin(time * 2.2 + i * 0.45) * 2.2 + Math.sin(time * 1.3 - i * 0.3) * 1.4;
         pts.push([x, Math.max(-6, base + h[i] + idle)]);
       }
       // Body
@@ -114,23 +114,32 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
       }
     }
     calm = energy < 0.5 && !bubbles.length && !lvl.moving ? calm + 1 : 0;
-    // Draw only while something is moving. At rest the canvas keeps its last (still) frame and
-    // costs nothing: no loop, no repaint, no battery.
-    const waking = t < awakeUntil && !reduced && document.visibilityState === "visible";
-    if (waking || calm < 20) run();
+    // Keeps rippling while the app is on screen; stops when it's hidden (and with reduced
+    // motion, once still), and starts again when it's back.
+    // An empty cover has no surface to ripple, so it rests until it's filled.
+    if (calm < 20) run();
+    // At rest the surface only ripples gently, so 25 frames a second is plenty. Waiting on a
+    // timer (not skipping frames) lets the browser itself idle between them.
+    else if (!reduced && document.visibilityState === "visible" && lvl.value > 0.001) idle();
   }
 
   function run() {
+    clearTimeout(idleTimer);
+    idleTimer = 0;
     if (alive) raf ||= requestAnimationFrame(frame);
   }
-  function wake(ms = 2500) {
-    awakeUntil = Math.max(awakeUntil, performance.now() + ms);
+  function idle() {
+    if (alive && !idleTimer && !raf) idleTimer = setTimeout(() => ((idleTimer = 0), run()), 40);
+  }
+  function wake() {
     run();
   }
+  const onVisible = () => document.visibilityState === "visible" && run();
+  document.addEventListener("visibilitychange", onVisible);
 
   const ro = new ResizeObserver(() => {
     size();
-    run();
+    if (w) run();
   });
   ro.observe(canvas);
 
@@ -160,7 +169,9 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
     destroy() {
       alive = false;
       ro.disconnect();
+      document.removeEventListener("visibilitychange", onVisible);
       cancelAnimationFrame(raf);
+      clearTimeout(idleTimer);
     },
   };
 }

@@ -152,7 +152,49 @@ Cloudflare Worker (worker/worker.js) ── checks origin, rate-limits, validate
 
 Optionally add a Rate Limiting binding named `LIMITER` for platform-level limits.
 
-## Sync, and why data seemed to disappear
+## Accounts
+
+Log in with a **username (or email) and a password**, and your shelves follow you to any device: phone, laptop, the home-screen app. Stats → Sync & backup → **Sign up**. There are no social features: an account is just your private, encrypted backup.
+
+It's built like a password manager, so a breach of the server gives an attacker nothing readable:
+
+- **Your password never leaves your phone.** The browser stretches it with PBKDF2-SHA256 (600,000 rounds) and splits the result in two:
+  - One half is the proof of the password, sent to the server. The server stores it only as a keyed hash (HMAC with a server secret). Guessing a password from a stolen database would need that secret, plus 600,000 rounds per guess.
+  - The other half never leaves the device. It unlocks the random key that encrypts your shelves.
+- **The server can't read your books.** The shelves are compressed, then encrypted on your phone (AES-256-GCM). The key that encrypts them is stored on the server only in encrypted form. On your device it's a non-extractable key: page code can use it but can't read it out.
+- **No personal data stored.** Your username or email is stored only as a keyed hash, never as text, and nobody is ever emailed. Rate-limit counters use hashes, not IP addresses.
+- **Sessions.** Each login gets a random token. The server keeps only its SHA-256, and it expires after 30 days unused. Logging out ends it; **log out everywhere** ends them all. Changing your password signs out your other devices.
+- **Forgot your password?** When you sign up you get a one-time **recovery code**, and you confirm you've saved it by typing its last four characters. The code sets a new password and keeps your books. We can't reset a password for you, because we can't read your account. That's the point.
+- **Rate limits** on every account action. A quick per-location limit sits in front of durable limits stored in the database, which apply across all of Cloudflare:
+
+  | Action | Limit |
+  |---|---|
+  | Logins | 20 per address and 10 per account, every 10 minutes |
+  | Sign-ups | 5 per address per hour |
+  | Recovery | 10 per address and 5 per account, per hour |
+  | Backups | 400 saves per account per hour |
+
+  Wrong passwords lock the account for 1 minute after 5 misses, then 2, 4… up to an hour. Answers carry `Retry-After`.
+- **No user enumeration.** A wrong password and an unknown account get the same answer. Unknown accounts get a made-up salt that never changes.
+- **Delete your account** (it needs your password): the account, its backup and its sessions are removed for good.
+
+The phone stays the main copy, so the app is instant and works offline. The account is the backup and the bridge between devices. Changes go up a couple of seconds after you make them, when the app comes back on screen, and when you're back online. Two devices saving at once merge rather than overwrite.
+
+**Why Cloudflare D1 and not DynamoDB.**
+- **Credentials.** The Worker reaches D1 through a binding, so there's no access key to store, rotate or leak. DynamoDB would need an AWS key with request signing inside the Worker.
+- **Free tier.** D1's (5 GB, 5 million reads and 100,000 writes a day) is far beyond what this needs: a compressed, encrypted library of 1,000 books, descriptions included, is about 120 KB, so 5 GB holds about 40,000 libraries that size.
+- **One data blob, not a row per book.** Per-book rows would show the server how many books you have and when you read. They would also cost a write per change, and they can't be end-to-end encrypted.
+- **No re-fetching book details.** Title, author and pages are kept with each book rather than fetched from a books API every time. With 300 books, that would be 300 API calls (and a burned quota) just to open the app. Covers are fetched on demand.
+
+### Switching accounts on in Cloudflare
+
+1. **Storage & Databases → D1 → Create database** → name it `shelfie` → Create.
+2. **Workers & Pages → shelf-api → Settings → Bindings → Add → D1 database**: variable name **`DB`**, database `shelfie` → Deploy.
+3. **Settings → Variables and Secrets → Add**: type **Secret**, name **`AUTH_SECRET`**, value: 32 or more random characters → Deploy. One way to make one is to paste this into any browser console: `crypto.randomUUID() + crypto.randomUUID()`. Never use the Text type for it. Changing it later signs everyone out and stops every password working.
+4. **Edit code** → paste the new `worker/worker.js` → Deploy. The tables create themselves on first use.
+5. `…/api/health` now shows `"accounts":true`, and the Account tile appears in Stats.
+
+## Sync codes, and why data seemed to disappear
 
 Your shelves are stored in the browser. Two things made them look lost:
 
@@ -161,7 +203,7 @@ Your shelves are stored in the browser. Two things made them look lost:
 
 On top of that, two copies open at once (two tabs, or Chrome and the installed app on Android) used to overwrite each other. That's fixed: every save now merges with what's already stored, and open copies pick up each other's changes live.
 
-**Sync** fixes the rest. Stats → Sync & backup → **Turn on sync** creates a sync code on this device. In the other place (the home-screen app, another phone, a laptop) open Stats → **I have a code** and type it. Both copies merge, and from then on they stay in step: after every change, when the app comes back to the screen, and when you're back online.
+**Accounts** (above) fix the rest. Without an account, a **sync code** still works: Stats → Sync & backup → **Turn on sync** creates a sync code on this device. In the other place (the home-screen app, another phone, a laptop) open Stats → **I have a code** and type it. Both copies merge, and from then on they stay in step: after every change, when the app comes back to the screen, and when you're back online.
 
 - **End-to-end encrypted.** The shelves are encrypted in the browser (AES-256-GCM) with a key derived from the code. The Worker stores only ciphertext under a SHA-256 hash of the code. Neither the code nor anything readable ever reaches the server.
 - **Nothing is lost in a merge.** Each book keeps its latest version, removals are remembered (so a removed book doesn't come back from another copy), the reading log keeps the higher count per day, and badges and eggs are pooled.
@@ -185,19 +227,43 @@ Synced copies expire after 400 days without a save.
 - **Strict Content Security Policy.** Scripts load only from this site. The page can connect only to its own Worker (and Open Library as the keyless fallback); images only from the two cover hosts.
 - **No untrusted HTML.** Book data is written with `textContent`; only cover addresses from Google Books or Open Library are stored or shown, and the page re-checks everything the Worker sends.
 - **Secrets stay server-side.** See above.
-- **Nothing about visitors is stored.** No accounts, cookies or analytics. Your shelves live in `localStorage` on your device. If you turn on sync, the Worker keeps an encrypted copy it cannot read. The Worker keeps no logs of who searched.
+- **Nothing readable about you is stored.** No cookies or analytics. Your shelves live on your device. With an account or a sync code, the Worker keeps an encrypted copy it cannot read, and accounts store no username, email, password or IP address in readable form. The Worker keeps no logs of who searched.
+- **No token leaks.** Session tokens travel only in an `Authorization` header to Shelfie's own Worker, over HTTPS. They're never put in URLs or cookies, and the server stores only their hashes. Every Worker answer is `no-store`, and anything matching a secret is blocked before it leaves.
 - **No referrers to third parties.** Credentials are omitted from API calls.
 
 ---
 
-## Performance
+## Motion, and keeping the phone cool
 
-Shelfie does nothing at all when you aren't touching it, so it doesn't drain the battery or warm the phone:
+Shelfie keeps moving while it's open, even when you're just looking, because that's half the fun:
+- the liquid ripples;
+- the cover on top drifts slowly;
+- the LED blinks;
+- the shelf name scrolls behind the pile;
+- the + stamp breathes;
+- the critters wander.
 
-- **No idle loops.** The liquid stops its animation loop once it's calm. A stamp's cover art animates for a few seconds after it reaches the top, then rests.
-- **Cheap shadows and grain.** Shadows are pre-blurred layers instead of live filters, and the grain is a static background.
+Every few seconds of quiet, something does a little fidget: the stamp wiggles, the dial ring glows, the keys hop, the liquid sloshes.
+
+It's built so that motion stays cheap:
+
+- **On the GPU.** The ambient animations move or fade whole layers (transform and opacity only), which the GPU composites without the page re-laying out. The cover art's own shapes (drawn as SVG, which uses the CPU) dance for 12 seconds when a stamp lands on top. After that, the GPU drift takes over.
+- **A gentle liquid.** At rest, the liquid redraws 25 times a second on a timer, so the browser idles in between. While you're scrubbing it runs at full frame rate. It stops when the app is in the background or the cover is empty.
+- **Idle cost.** In a headless browser (software rendering, the worst case), all the idle motion costs about 4–5% of one CPU core. A phone's GPU does much of it for less.
+- **Cheap shadows and grain.** Shadows are pre-blurred layers, not live filters, and the grain is a static background.
 - **Blur only when needed.** The background blur only exists while a panel is open.
 - **A windowed pile.** Only the stamps near the top of the pile exist on the page, whatever the size of your library.
+- **Reduced Motion.** With Reduce Motion switched on in your phone's settings, all of this stops.
+
+## Sharp covers
+
+- **Google Books covers** are requested at the size your screen needs, up to 1080 × 1620, so zooming in stays crisp.
+- **ISBN-only books.** Open Library's largest covers are only 325 × 500. So a book with only an ISBN (most Goodreads imports) asks the Worker once whether Google has a sharper cover. The answer is remembered on your device and cached at Cloudflare's edge for a month.
+
+## Home screen, and chai
+
+- **Add to home screen.** A guide that matches your browser: pictures for iPhone and iPad Safari (including iOS 26's ••• menu) and Mac Safari, steps for Firefox, Edge and Chrome on iPhone, and the one-tap install button where Chrome or Edge offer one. Apps' built-in browsers get an "Open in Safari" link. It's offered once on a later visit (never the first), and once more at most two weeks later. After that it's only the **Add to home screen** key in Stats, and it disappears once Shelfie is installed.
+- **Chip in for a chai.** A ticket at the very bottom of Stats, after everything else. It's never a pop-up and never in the way of reading.
 
 ---
 
@@ -231,14 +297,21 @@ js/
   quips.js            Greetings and jokes, with your name
   critters.js         The animals that wander by
   goodreads.js        Reads a Goodreads export (CSV) into books
+  account.js          Accounts: key derivation, wrapped keys, compressed + encrypted backups, sessions
+  covers.js           Sharp covers: sizes for Google covers, HD lookups for ISBN-only books
+  install.js          How this browser adds a web app to the home screen (from the track app)
+  guide.js            Picture guides for adding to the home screen on Apple devices
+  home.js             The add-to-home-screen pop-up and the chai card
   util.js             Safe DOM builder, seeded random
-worker/worker.js      The Cloudflare Worker: holds the Google key, searches, caches, stores encrypted sync copies
+worker/worker.js      The Cloudflare Worker: holds the Google key, searches, covers, accounts (D1), encrypted backups
 tests/
   store.test.mjs      Rules (node --test)
   search.test.mjs     Turning search answers into books
   worker.test.mjs     The Worker: key handling, redaction, origin, rate limits, fallback, sync store
   sync.test.mjs       Sync codes and encryption
   goodreads.test.mjs  Goodreads CSV parsing, importing, names, reset
+  accounts.test.mjs   Accounts end to end: the browser's crypto against the real Worker and real SQL
+  helpers/d1.mjs      A D1 stand-in on Node's built-in SQLite
   no-secrets.test.mjs Fails if anything shaped like a key is committed
   app.e2e.mjs         The whole app with real pointer gestures (Playwright, searches stubbed)
 tools/build-icons.mjs App icons from one SVG mark

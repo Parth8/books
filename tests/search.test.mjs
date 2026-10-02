@@ -18,7 +18,7 @@ test("Google Books: fields, a sharp cover and a plain-text blurb", () => {
     author: "Frank Herbert",
     pages: 535,
     year: 1990,
-    img: "https://books.google.com/books/content?id=B1hSG45JCX4C&printsec=frontcover&img=1&zoom=1&fife=w480-h720&source=gbs_api",
+    img: "https://books.google.com/books/content?id=B1hSG45JCX4C&printsec=frontcover&img=1&zoom=1&fife=w720-h1080&source=gbs_api",
     cats: "Fiction",
     blurb: "Set on the desert planet Arrakis, Dune is the story of the boy Paul Atreides.",
   });
