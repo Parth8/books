@@ -62,7 +62,7 @@ Switch on You → Settings → **Motion controls** (iPhone asks for permission, 
 | **Flick** the phone right / left (turn it to face right or left and back, like a page) | Next / previous book |
 | **Twist** it like a steering wheel | Next / previous shelf |
 | **Flick up** (tip the top edge towards you and back) | Add a book |
-| **Tilt** | The pile drifts, the background shifts the other way, the bulbs and fairy lights swing, and a hotspot of light slides across the cover |
+| **Tilt** | The pile leans in 3D, the background shifts the other way, the bulbs and fairy lights swing, and a hotspot of light slides across the cover |
 
 - **Learning the moves.** A guide with little animated phones shows each move. The first couple of times you use a move, the island says what it did.
 - **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open. After each move it waits for the phone to settle, so the swing back never counts as a move the other way: one flick is one book.
@@ -165,7 +165,7 @@ Built from the moodboard: tactile neo-brutalism on near-black.
 - **Feeling keys**: rate finished books with glossy emoji keycaps (🫠 😐 🙂 😍 🤯).
 - **Posters**: full-screen flat colour with giant condensed type that slams in line by line.
 - **Bento stats**: level, streak, a watch-face goal ring (spin it to set your goal), the week, totals, and badges as stickers.
-- **Generated covers**: books without a cover (and any cover still loading) get gradient art with a bold shape (flower, cube, sun, rings, stripes, dots), picked from the title so it's always the same.
+- **Generated covers**: books without a cover (and any cover still loading) get grainy gradient art with a bold shape (flower, cube, sun, rings, stripes, dots), picked from the title so it's always the same.
 
 Fonts: Archivo (condensed, heavy), Space Mono and Silkscreen, all self-hosted.
 
@@ -173,7 +173,7 @@ Fonts: Archivo (condensed, heavy), Space Mono and Silkscreen, all self-hosted.
 
 - **Keycaps.** Sculpted and glossy, with a streak of light like translucent keycaps. They press down fast and bounce back up, with a coloured glow underneath that brightens while you hold.
 - **Round arcade buttons** for adding pages (+1, +5, +10, +25), and a ▶ on START.
-- **Fairy lights** strung over the macropad glow steadily, with the odd random stutter. They chase on big moments: finishing a book, a goal, a level, a sticker, an import, a jackpot.
+- **Fairy lights** strung over the macropad twinkle at their own pace. They chase on big moments: finishing a book, a goal, a level, a sticker, an import, a jackpot.
 - **Neon.** The shelf you're on glows like a sign, hangs a little crooked, and flickers now and then.
 - **Edison bulbs.** Warm filament bulbs hang on drooping wires behind the shelf name (backlighting it) and over every panel title, and one dangles off each section heading. Every second or two a random bulb stutters, as if the wiring's dodgy. Headings hang slightly crooked, like hand-hung signs.
 - **Levers** in the danger zone.

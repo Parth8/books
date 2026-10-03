@@ -62,8 +62,8 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
       const pts = [];
       for (let i = 0; i < N; i++) {
         const x = (i / (N - 1)) * w;
-        // A little life while it moves, easing to flat (and still) as it settles.
-        const idle = reduced || calm > 12 ? 0 : (Math.sin(time * 2.2 + i * 0.45) * 2.2 + Math.sin(time * 1.3 - i * 0.3) * 1.4) * (1 - calm / 12);
+        // A gentle idle ripple, always: the liquid never looks frozen.
+        const idle = reduced ? 0 : Math.sin(time * 2.2 + i * 0.45) * 2.2 + Math.sin(time * 1.3 - i * 0.3) * 1.4;
         pts.push([x, Math.max(-6, base + h[i] + idle)]);
       }
       // Body
@@ -114,9 +114,11 @@ export function createLiquid(canvas, { color = "#2b3bff", level = 0 } = {}) {
       }
     }
     calm = energy < 0.5 && !bubbles.length && !lvl.moving ? calm + 1 : 0;
-    // Draw only while something moves (a scrub, a splash, bubbles). At rest the canvas keeps its
-    // last frame and costs nothing; the gentle idle ripple is a CSS wave on top (GPU only).
+    // While something moves (a scrub, a splash, bubbles): every frame. At rest it only ripples
+    // gently, so 25 frames a second on a timer is plenty and the browser idles in between. It
+    // rests while hidden, behind a panel, or when the cover is empty.
     if (calm < 20) run();
+    else if (!reduced && document.visibilityState === "visible" && lvl.value > 0.001 && !document.body.classList.contains("panel-up")) idle();
   }
 
   function run() {

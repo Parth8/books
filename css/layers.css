@@ -36,25 +36,3 @@
 .lid { backface-visibility: visible; -webkit-backface-visibility: visible; }
 .stamp.peek .lid { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
 .edison.over-title { will-change: transform; }
-
-/* The liquid's idle ripple: a wavy highlight sliding along the surface (transform only) */
-.ripple {
-  position: absolute;
-  left: 0;
-  width: 200%;
-  height: 8px;
-  bottom: calc(var(--lvl, 0) * 100% - 3px);
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8'%3E%3Cpath d='M0 4q10-4 20 0t20 0' fill='none' stroke='white' stroke-opacity='.7' stroke-width='2'/%3E%3C/svg%3E") 0 0 / 40px 8px repeat-x;
-  pointer-events: none;
-  display: none;
-  transition: bottom 0.5s var(--spring);
-}
-.stamp.top.reading .ripple {
-  display: block;
-  animation: ripple 2.6s linear infinite;
-}
-@keyframes ripple {
-  to { transform: translateX(-40px); }
-}
-.stamp.scrubbing .ripple { opacity: 0; }
-.panel-up .ripple { animation-play-state: paused; }

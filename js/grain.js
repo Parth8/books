@@ -2,6 +2,12 @@
 // --grain. (An SVG noise filter does the same job but Safari re-runs it as things repaint.)
 
 export function makeGrain() {
+  tile("--grain", (v) => [v, v, v, Math.random() < 0.5 ? 18 : 0]);
+  // A heavier, darker grain for the generated cover art (printed-poster texture).
+  tile("--grain-art", (v) => [0, 0, 0, v < 90 ? 55 : v < 160 ? 22 : 0]);
+}
+
+function tile(name, px) {
   try {
     const n = 128;
     const c = document.createElement("canvas");
@@ -9,11 +15,13 @@ export function makeGrain() {
     const x = c.getContext("2d");
     const img = x.createImageData(n, n);
     for (let i = 0; i < img.data.length; i += 4) {
-      const v = Math.random() * 255;
-      img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-      img.data[i + 3] = Math.random() < 0.5 ? 18 : 0;
+      const [r, g, b, a] = px(Math.random() * 255);
+      img.data[i] = r;
+      img.data[i + 1] = g;
+      img.data[i + 2] = b;
+      img.data[i + 3] = a;
     }
     x.putImageData(img, 0, 0);
-    c.toBlob((blob) => blob && document.documentElement.style.setProperty("--grain", `url(${URL.createObjectURL(blob)})`));
+    c.toBlob((blob) => blob && document.documentElement.style.setProperty(name, `url(${URL.createObjectURL(blob)})`));
   } catch {}
 }

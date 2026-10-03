@@ -16,7 +16,7 @@ let parts = [];
 let running = false;
 let dpr = 1;
 let last = 0;
-const MAX_PARTS = 220;
+const MAX_PARTS = 600; // (only a safety net: a big celebration is ~300)
 const sprites = new Map();
 /** Emoji or "+XP" text drawn once onto a little canvas, then stamped. */
 function sprite(text, size, color) {

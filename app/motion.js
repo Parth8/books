@@ -18,13 +18,15 @@ import { mePanel, refreshMe, stats } from "./stats.js";
 const stageBg = $(".stage-bg");
 /**
  * The tilt of the phone, -1..1 each way: the pile drifts, the room shifts the other way, the bulbs
- * swing and the light on the cover slides. All of it is 2D transforms on elements that already have
+ * swing and the light on the cover slides. All of it is transforms on elements that already have
  * their own layer, so the GPU just moves pictures about; nothing is re-laid out or repainted.
  */
 let swung = 0;
 function applyTilt(x, y) {
+  // The pile leans in 3D about an axis at right angles to the tilt, and drifts a little with it.
+  const mag = Math.hypot(x, y);
   deckEl.style.translate = `${(x * 10).toFixed(1)}px ${(y * 6).toFixed(1)}px`;
-  deckEl.style.rotate = `${(x * 1.5).toFixed(2)}deg`;
+  deckEl.style.rotate = mag > 0.01 ? `${(-y).toFixed(3)} ${x.toFixed(3)} 0 ${(mag * 9).toFixed(2)}deg` : "";
   stageBg.style.translate = `${(-x * 16).toFixed(1)}px ${(-y * 10).toFixed(1)}px`;
   fairy.style.rotate = `${(x * 2.5).toFixed(2)}deg`;
   // The bulbs swing in steps (their own transition smooths it): restyling every bulb every frame

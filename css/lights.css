@@ -63,6 +63,7 @@
   top: 2px;
   width: 11px;
   height: 17px;
+  filter: drop-shadow(0 0 2px #ffd27a);
 }
 /* The glow: a pre-blurred halo that only fades */
 .ed-halo {
@@ -126,6 +127,11 @@
 /* Brighter neon on the shelf name: a white core and a wide bloom (static), slightly crooked */
 .tape-item[aria-selected="true"] b {
   rotate: -2deg;
-  text-shadow: 0 0 3px #fff, 0 0 16px color-mix(in srgb, var(--neon, #e7ff3d) 80%, transparent);
-  animation: none;
+  text-shadow:
+    0 0 1px #fff,
+    0 0 4px #fff,
+    0 0 12px color-mix(in srgb, var(--neon, #e7ff3d) 90%, transparent),
+    0 0 28px color-mix(in srgb, var(--neon, #e7ff3d) 70%, transparent),
+    0 0 60px color-mix(in srgb, var(--neon, #e7ff3d) 45%, transparent);
+  /* the glow is painted once; the flicker only fades it (opacity) */
 }

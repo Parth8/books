@@ -35,7 +35,7 @@ export function createDeck(root, opts) {
 
   // Only the stamps near the top exist as elements: a shelf of 500 books still has about 8
   // stamps in the page. Others are built when they come into view and dropped when they leave.
-  const WINDOW = { behind: 2, ahead: 4 };
+  const WINDOW = { behind: 2, ahead: 5 };
   const inWindow = (j) => j >= i - WINDOW.behind && j <= i + WINDOW.ahead;
 
   function renderFor(el) {

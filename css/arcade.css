@@ -67,7 +67,10 @@
   border-radius: 50% 50% 45% 45%;
   background: var(--c);
   box-shadow: 0 0 8px 2px var(--c);
-  opacity: 0.9;
+  opacity: 0.35;
+  /* opacity only: a tiny GPU fade, no repaint */
+  animation: twinkle var(--d) ease-in-out var(--delay) infinite alternate;
+  will-change: opacity;
 }
 .fairy i::before {
   content: "";

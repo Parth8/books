@@ -98,7 +98,7 @@ export function showPageLabel(p, b) {
   const lbl = deck.top?.el.querySelector(".pg");
   if (!lbl) return;
   lbl.textContent = `P.${p}`;
-  lbl.parentElement.style.setProperty("--lvl", String(p / b.pages)); // (on the lid: the page label and the ripple both ride the level)
+  lbl.parentElement.style.setProperty("--lvl", String(p / b.pages)); // (on the lid: the page label rides the level)
 }
 
 export function saveSoon(ms) {

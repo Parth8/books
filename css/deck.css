@@ -252,6 +252,7 @@
   align-items: center;
   transform: rotate(-16deg);
   pointer-events: none;
+  mix-blend-mode: multiply; /* ink soaked into the card (a small element, so cheap) */
   color: #c4122f;
   z-index: 4;
 }
@@ -460,4 +461,13 @@
 .egg-lens span {
   font-size: 40cqw;
   filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
+}
+
+/* Grain on the generated art: the one shared texture, tiled (no SVG noise filter per card) */
+.art-grain {
+  position: absolute;
+  inset: 0;
+  background: var(--grain-art, none);
+  background-size: 96px;
+  pointer-events: none;
 }

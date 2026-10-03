@@ -3,6 +3,7 @@
   position: relative;
   /* The pile sizes itself to this box (container units), whatever the window. */
   container-type: size;
+  perspective: 1100px; /* so the pile can lean in 3D as you tilt the phone */
   margin: 8px 12px 0;
   border-radius: 34px;
   background: var(--stage);
@@ -38,14 +39,27 @@
   word-spacing: 30px;
   text-align: center;
   width: 160%;
-  /* Still. (A drifting outline twice the screen wide was the single most expensive thing
-     on screen in Safari.) It shifts with the tilt of the phone instead, when motion is on. */
+  /* Its own GPU layer, drawn once: the drift only moves it. */
+  will-change: transform;
+  animation: marquee 40s linear infinite;
 }
 @keyframes marquee {
   to { transform: translateX(-25%); }
 }
-/* (No filter on the stage while you lift a book: Safari would re-filter the whole stage
-   on every frame of the drag.) */
+/* Lifting a book: the stage dims to a spotlight around it and the colour deepens. Drawn once as a
+   gradient that only fades (a filter here would re-filter the whole stage every frame of the drag). */
+.stage-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 55% at 50% 55%, transparent 35%, rgba(0, 0, 0, 0.45));
+  display: none; /* only exists while you hold a book */
+  animation: spot-in 0.3s ease-out both;
+}
+body.lifting .stage-bg::after { display: block; }
+@keyframes spot-in {
+  from { opacity: 0; }
+}
 
 .deck {
   position: absolute;

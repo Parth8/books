@@ -46,28 +46,28 @@ export function artSvg(seed) {
       const y = cy + Math.sin(ang) * d;
       body += `<g transform="translate(${n(x)} ${n(y)}) rotate(${n(r() * 360)})">${[0, 72, 144, 216, 288].map((p) => `<ellipse rx="5" ry="9" cy="-7" transform="rotate(${p})" fill="${a}"/>`).join("")}<circle r="2.4" fill="${b}"/></g>`;
     }
-    body = `<g style="transform-origin:100px 130px">${body}</g>`;
+    body = `<g class="fx-sway" style="transform-origin:100px 130px">${body}</g>`;
   } else if (shape === "cube") {
-    body = `<g><ellipse cx="100" cy="196" rx="60" ry="14" fill="url(#${id}r)" opacity=".35"/>
+    body = `<g class="fx-float"><ellipse cx="100" cy="196" rx="60" ry="14" fill="url(#${id}r)" opacity=".35"/>
       <path d="M100 70 L156 100 L156 164 L100 194 L44 164 L44 100 Z" fill="${a}"/>
       <path d="M100 70 L156 100 L100 130 L44 100 Z" fill="${b}"/>
       <path d="M100 130 L156 100 L156 164 L100 194 Z" fill="#000" opacity=".22"/>
       <circle cx="100" cy="132" r="70" fill="url(#${id}h)" opacity=".35"/></g>`;
   } else if (shape === "rings") {
     for (let i = 0; i < 6; i++)
-      body += `<circle cx="100" cy="130" r="${16 + i * 16}" fill="none" stroke="${i % 2 ? a : b}" stroke-width="${n(5 + r() * 6)}" stroke-dasharray="${n(10 + r() * 40)} ${n(6 + r() * 18)}" style="transform-origin:100px 130px"/>`;
+      body += `<circle class="fx-spin s${i % 2}" cx="100" cy="130" r="${16 + i * 16}" fill="none" stroke="${i % 2 ? a : b}" stroke-width="${n(5 + r() * 6)}" stroke-dasharray="${n(10 + r() * 40)} ${n(6 + r() * 18)}" style="transform-origin:100px 130px"/>`;
   } else if (shape === "sun") {
-    body += `<g style="transform-origin:100px 170px">${Array.from({ length: 16 }, (_, i) => `<rect x="97" y="40" width="6" height="64" rx="3" fill="${b}" transform="rotate(${i * 22.5} 100 170)"/>`).join("")}</g><circle cx="100" cy="170" r="58" fill="${a}" style="transform-origin:100px 170px"/>`;
+    body += `<g class="fx-spin s0" style="transform-origin:100px 170px">${Array.from({ length: 16 }, (_, i) => `<rect x="97" y="40" width="6" height="64" rx="3" fill="${b}" transform="rotate(${i * 22.5} 100 170)"/>`).join("")}</g><circle class="fx-pulse" cx="100" cy="170" r="58" fill="${a}" style="transform-origin:100px 170px"/>`;
     for (let i = 0; i < 4; i++) body += `<rect x="0" y="${182 + i * 16}" width="200" height="${7 - i}" fill="${bg}"/>`;
   } else if (shape === "stripes") {
-    body += `<g transform="rotate(${n(-35 + r() * 70)} 100 130)"><g>${Array.from({ length: 20 }, (_, i) => `<rect x="${(i - 6) * 26 - 100}" y="-140" width="${n(9 + r() * 9)}" height="560" fill="${i % 3 ? a : b}"/>`).join("")}</g></g>`;
+    body += `<g transform="rotate(${n(-35 + r() * 70)} 100 130)"><g class="fx-slide">${Array.from({ length: 20 }, (_, i) => `<rect x="${(i - 6) * 26 - 100}" y="-140" width="${n(9 + r() * 9)}" height="560" fill="${i % 3 ? a : b}"/>`).join("")}</g></g>`;
   } else if (shape === "dots") {
     for (let y = 0; y < 8; y++)
       for (let x = 0; x < 6; x++) {
         const big = r() > 0.72;
         const px = 20 + x * 32;
         const py = 20 + y * 32;
-        body += `<circle cx="${px}" cy="${py}" r="${big ? 11 : 4}" fill="${big ? a : b}" style="transform-origin:${px}px ${py}px;animation-delay:${n(-r() * 3)}s"/>`;
+        body += `<circle class="${big ? "fx-pulse" : ""}" cx="${px}" cy="${py}" r="${big ? 11 : 4}" fill="${big ? a : b}" style="transform-origin:${px}px ${py}px;animation-delay:${n(-r() * 3)}s"/>`;
       }
   } else {
     let d = "";
@@ -77,7 +77,7 @@ export function artSvg(seed) {
       const rr = 52 + r() * 34;
       d += `${i ? "L" : "M"}${n(100 + Math.cos(ang) * rr)} ${n(130 + Math.sin(ang) * rr)} `;
     }
-    body += `<path d="${d}Z" fill="${a}" stroke="${b}" stroke-width="8" stroke-linejoin="round" style="transform-origin:100px 130px"/>`;
+    body += `<path class="fx-spin s1" d="${d}Z" fill="${a}" stroke="${b}" stroke-width="8" stroke-linejoin="round" style="transform-origin:100px 130px"/>`;
   }
   return `<svg class="art" viewBox="0 0 200 260" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
   <defs>
@@ -117,7 +117,7 @@ function coverImg(src) {
 
 /** The picture: generated art underneath, the real cover fading in on top once it loads. */
 export function picture(book) {
-  const wrap = h("div", { class: "pic" }, svg(artSvg(book.seed)), h("span", { class: "pic-title", text: book.title }));
+  const wrap = h("div", { class: "pic" }, svg(artSvg(book.seed)), h("i", { class: "art-grain", "aria-hidden": "true" }), h("span", { class: "pic-title", text: book.title }));
   const src = coverOf(book);
   let img = null;
   if (src) {
@@ -225,7 +225,7 @@ export function bookStamp(book, { tone } = {}) {
         "div",
         { class: "win book-3d" },
         h("div", { class: "leaf" }, h("small", { text: "CHAPTER ONE" }), h("b", { text: book.title })),
-        h("div", { class: "lid" }, picture(book), h("canvas", { class: "liquid", "aria-hidden": "true" }), h("i", { class: "ripple", "aria-hidden": "true" }), shine(book.seed), h("span", { class: "pg", "aria-hidden": "true" })),
+        h("div", { class: "lid" }, picture(book), h("canvas", { class: "liquid", "aria-hidden": "true" }), shine(book.seed), h("span", { class: "pg", "aria-hidden": "true" })),
         h("div", { class: "book-fx" }),
       ),
       h("div", { class: "cap" }, h("b", { text: book.title }), h("small", { text: book.author || "Unknown author" })),

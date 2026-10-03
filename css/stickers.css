@@ -24,6 +24,7 @@
 }
 .mini.got .mini-e {
   font-size: 34px;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.2));
 }
 .badges {
   gap: 16px 12px;
