@@ -1,6 +1,7 @@
-// Accounts: log in with a username (or email) and a password, and your shelves follow you to
-// any device, end-to-end encrypted. Shelfie's server can't read them, and never sees your
-// password.
+// Accounts: a username, an optional email and a password: three separate things (change one,
+// the others stay). Log in with your username or your email, or with Face ID once it's on. Your
+// shelves follow you to any device, end-to-end encrypted: Shelfie's server can't read them, and
+// never sees your password.
 //
 //   master  = PBKDF2-SHA256(password, salt, 600,000 rounds)        (here, in the browser)
 //   authKey = HKDF(master, "shelfie auth")  → sent to the server as proof of the password
@@ -16,6 +17,7 @@
 // encrypted backup and the bridge between devices.
 
 import { makeCode, cleanCode, prettyCode } from "./sync.js";
+import { createPasskey, usePasskey, prfKey } from "./passkey.js";
 
 export const KDF_ROUNDS = 600_000;
 const te = new TextEncoder();
@@ -28,13 +30,27 @@ const b64 = (buf) => {
 };
 const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
+const USERNAME = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+const EMAIL = /^[^\s@<>"]{1,64}@[^\s@<>"]{1,189}\.[^\s@<>".]{2,}$/;
+const norm = (raw) => String(raw ?? "").normalize("NFKC").trim().toLowerCase();
 /** Same rules as the server: a username or an email, lower-cased. Null if neither. */
 export function cleanLogin(raw) {
-  const v = String(raw ?? "").normalize("NFKC").trim().toLowerCase();
-  if (/^[a-z0-9][a-z0-9._-]{2,31}$/.test(v)) return v;
-  if (v.length <= 254 && /^[^\s@<>"]{1,64}@[^\s@<>"]{1,189}\.[^\s@<>".]{2,}$/.test(v)) return v;
+  const v = norm(raw);
+  if (USERNAME.test(v)) return v;
+  if (v.length <= 254 && EMAIL.test(v)) return v;
   return null;
 }
+/** A username (an "@" in front is fine), or null. */
+export const cleanUsername = (raw) => {
+  const v = norm(raw).replace(/^@/, "");
+  return USERNAME.test(v) ? v : null;
+};
+/** An email address, or null. */
+export const cleanEmail = (raw) => {
+  const v = norm(raw);
+  return v.length <= 254 && EMAIL.test(v) ? v : null;
+};
+export const USERNAME_RULE = "A username is 3 to 32 letters, numbers, dots, dashes or underscores.";
 
 const COMMON = new Set(["password", "password1", "password123", "1234567890", "12345678910", "qwertyuiop", "iloveyou12", "qwerty1234", "1q2w3e4r5t", "letmein123", "welcome123", "abcdefghij", "booksbooks", "shelfie123", "readingisfun", "harrypotter", "0987654321", "1111111111", "aaaaaaaaaa"]);
 
@@ -80,7 +96,7 @@ export const fromRecovery = (code) => hkdfPair(te.encode(`shelfie-recovery:${cod
 
 export const newSalt = () => b64(crypto.getRandomValues(new Uint8Array(16)));
 
-async function wrap(dataKey, encKey) {
+export async function wrap(dataKey, encKey) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.wrapKey("raw", dataKey, encKey, { name: "AES-GCM", iv });
   return `${b64(iv)}.${b64(ct)}`;
@@ -92,15 +108,19 @@ export async function unwrap(wrapped, encKey, extractable = false) {
   return crypto.subtle.unwrapKey("raw", unb64(ct), encKey, { name: "AES-GCM", iv: unb64(iv) }, { name: "AES-GCM", length: 256 }, extractable, ["encrypt", "decrypt"]);
 }
 
-/** Everything a new account needs. The recovery code is shown once and never stored. */
-export async function newAccount(login, password) {
+/**
+ * Everything a new account needs. The recovery code is shown once and never stored. `who` is
+ * { username, email? } (or, from older code, a single login).
+ */
+export async function newAccount(who, password) {
   const salt = newSalt();
   const { auth, encKey } = await fromPassword(password, salt);
   const recovery = makeCode();
   const r = await fromRecovery(recovery);
   const raw = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
   const wrapped = await wrap(raw, encKey);
-  const body = { login, salt, kdf: KDF_ROUNDS, auth, wrapped, rauth: r.auth, rwrapped: await wrap(raw, r.encKey) };
+  const names = typeof who === "string" ? { login: who } : { username: who.username, ...(who.email ? { email: who.email } : {}) };
+  const body = { ...names, salt, kdf: KDF_ROUNDS, auth, wrapped, rauth: r.auth, rwrapped: await wrap(raw, r.encKey) };
   const dataKey = await unwrap(wrapped, encKey); // the copy this device keeps can't be exported
   return { body, dataKey, recovery: prettyCode(recovery), wrapped };
 }
@@ -177,7 +197,9 @@ const writeMe = (me) => idbDo("readwrite", (s) => (me ? s.put(me, "me") : s.dele
  * device first syncs with an account it has logged into.
  */
 export function createAccount({ base, get, put, merge, onStatus, onSignedOut, onJoin }) {
-  let me = null; // { login, token, dataKey, wrapped, at }
+  // { username, login (what was typed to log in), email (if known on this device), hasEmail,
+  //   passkey, token, dataKey, wrapped, at }
+  let me = null;
   let timer = 0;
   let busy = null;
   let pending = null;
@@ -225,13 +247,36 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
     tell({ state: "off", login: null, at: 0, error: "" });
   }
 
-  async function signIn(login, token, dataKey, wrapped) {
-    // Joining an account brings its books here; it never wipes them (see onJoin in main.js).
+  async function signIn({ login, username = null, email = null, passkey = false }, token, dataKey, wrapped) {
+    // Joining an account brings its books here; it never wipes them (see onJoin in app/accounts.js).
     await onJoin?.();
-    me = { login, token, dataKey, wrapped, at: 0, rev: null, sum: null };
+    me = { login, username, email, hasEmail: !!email, passkey, token, dataKey, wrapped, at: 0, rev: null, sum: null };
     await writeMe(me);
-    tell({ state: "idle", login, error: "" });
+    tell({ state: "idle", login: username || login, error: "" });
+    await refresh();
     await round("pull");
+  }
+
+  /**
+   * Who we are, from the server: username, whether there's an email, whether Face ID is on, and
+   * the password's salt. Older accounts get upgraded to a separate username and email here.
+   */
+  async function whoami() {
+    const { data } = await call("/api/auth/me", { auth: true, body: me.username ? {} : { login: me.login } });
+    return data;
+  }
+  async function refresh() {
+    if (!me) return null;
+    try {
+      const d = await whoami();
+      if (!me) return null;
+      me = { ...me, username: d.username || null, hasEmail: !!d.email, email: d.email ? me.email || (me.login?.includes("@") ? me.login : null) : null, passkey: d.passkeys > 0 };
+      await writeMe(me);
+      tell({ login: me.username || me.login });
+      return d;
+    } catch {
+      return null;
+    }
   }
 
   // A fingerprint of a copy, to skip saves that would change nothing.
@@ -311,7 +356,8 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
   const ready = readMe().then((saved) => {
     if (saved?.token && saved?.dataKey) {
       me = saved;
-      tell({ state: "idle", login: saved.login, at: saved.at || 0 });
+      tell({ state: "idle", login: saved.username || saved.login, at: saved.at || 0 });
+      refresh();
       round("pull");
     } else tell({ state: "off" });
   });
@@ -335,31 +381,130 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
     get on() {
       return !!me;
     },
-    /** The username or email this device is logged in as. */
+    /** Your username (older accounts: the login they were made with, until they pick one). */
     get user() {
-      return me?.login || null;
+      return me?.username || me?.login || null;
+    },
+    get username() {
+      return me?.username || null;
+    },
+    /** The email, if this device knows it (the server only keeps a scrambled copy); true if set elsewhere. */
+    get email() {
+      return me?.email || (me?.hasEmail ? true : null);
+    },
+    /** Is Face ID login on for this account? */
+    get passkey() {
+      return !!me?.passkey;
     },
 
-    async signup(rawLogin, password) {
-      const login = cleanLogin(rawLogin);
-      if (!login) throw new Error("Use a username (3 to 32 letters, numbers, dots, dashes or underscores) or an email address.");
-      const problem = passwordProblem(password, login);
+    async signup(rawUsername, rawEmail, password) {
+      const username = cleanUsername(rawUsername);
+      if (!username) throw new Error(USERNAME_RULE);
+      const email = rawEmail ? cleanEmail(rawEmail) : null;
+      if (rawEmail && !email) throw new Error("That doesn't look like an email address.");
+      const problem = passwordProblem(password, username);
       if (problem) throw new Error(problem);
-      const made = await newAccount(login, password);
+      const made = await newAccount({ username, email }, password);
       const { data } = await call("/api/auth/signup", { body: made.body });
       if (!data?.token) throw new Error(data?.message || "That username is taken. Try another, or log in.");
-      await signIn(login, data.token, made.dataKey, made.wrapped);
+      await signIn({ login: username, username, email }, data.token, made.dataKey, made.wrapped);
       return made.recovery;
     },
 
     async login(rawLogin, password) {
       const login = cleanLogin(rawLogin);
-      if (!login) throw new Error("That isn't a username or an email address.");
+      if (!login) throw new Error("Use your username or your email address.");
       const { data: pre } = await call("/api/auth/prelogin", { body: { login } });
       const { auth, encKey } = await fromPassword(password, pre.salt, pre.kdf);
       const { data } = await call("/api/auth/login", { body: { login, auth } });
       const dataKey = await unwrap(data.wrapped, encKey);
-      await signIn(login, data.token, dataKey, data.wrapped);
+      await signIn({ login, username: data.username || null, email: login.includes("@") ? login : null }, data.token, dataKey, data.wrapped);
+    },
+
+    /**
+     * Face ID login, in two steps, because iPhone only shows the Face ID prompt straight after a
+     * tap: fetch a challenge ahead of time (passkeyChallenge), then use it on the tap.
+     */
+    async passkeyChallenge() {
+      const { data } = await call("/api/auth/passkey/challenge", { body: { for: "get" } });
+      return { ...data, at: Date.now() };
+    },
+    /** Face ID: one glance, no password. Only once it's been switched on (after a password login). */
+    async loginWithPasskey(ch) {
+      if (!ch || Date.now() - ch.at > 240_000) ch = await this.passkeyChallenge();
+      const p = await usePasskey(ch);
+      if (!p.prf) throw new Error("This browser can't unlock your books with Face ID. Log in with your password.");
+      const { data } = await call("/api/auth/passkey/login", { body: { challenge: ch.challenge, id: p.id, clientDataJSON: p.clientDataJSON, authenticatorData: p.authenticatorData, signature: p.signature } });
+      let dataKey;
+      try {
+        dataKey = await unwrap(data.pwrapped, await prfKey(p.prf));
+      } catch {
+        throw new Error("That passkey couldn't unlock your books. Log in with your password, then turn Face ID off and on again.");
+      }
+      await signIn({ login: data.username, username: data.username, passkey: true }, data.token, dataKey, data.wrapped);
+    },
+
+    /**
+     * Switching Face ID on, step one (slow, no prompt): check the password and get everything
+     * ready. Step two, finishPasskey, makes the passkey on a tap.
+     */
+    async preparePasskey(password) {
+      if (!me) throw new Error("Log in first.");
+      const d = await whoami();
+      const { auth, encKey } = await fromPassword(password, d.salt, d.kdf);
+      let key;
+      try {
+        key = await unwrap(me.wrapped, encKey, true);
+      } catch {
+        throw new Error("That isn't your password.");
+      }
+      const { data: ch } = await call("/api/auth/passkey/challenge", { auth: true, body: { for: "create" } });
+      return { auth, key, ch };
+    },
+    async finishPasskey({ auth, key, ch }) {
+      const p = await createPasskey(ch);
+      if (!p.prf) throw new Error("This browser can make a passkey but can't use it to unlock encrypted books yet (it needs iOS 18 or newer, or a recent Chrome). Your password still works.");
+      const pwrapped = await wrap(key, await prfKey(p.prf));
+      await call("/api/auth/passkey/register", { auth: true, body: { auth, challenge: ch.challenge, id: p.id, clientDataJSON: p.clientDataJSON, attestationObject: p.attestationObject, pwrapped } });
+      me = { ...me, passkey: true };
+      await writeMe(me);
+      tell({});
+    },
+
+    /** Switch Face ID off: every passkey for this account stops working. */
+    async disablePasskey() {
+      if (!me) throw new Error("Log in first.");
+      await call("/api/auth/passkey/remove", { auth: true, body: {} });
+      me = { ...me, passkey: false };
+      await writeMe(me);
+      tell({});
+    },
+
+    /** A new username. No password needed: it's only what you're called (and one way to log in). */
+    async setUsername(raw) {
+      if (!me) throw new Error("Log in first.");
+      const username = cleanUsername(raw);
+      if (!username) throw new Error(USERNAME_RULE);
+      if (username === me.username) return username;
+      await call("/api/auth/username", { auth: true, body: { username } });
+      me = { ...me, username };
+      await writeMe(me);
+      tell({ login: username });
+      return username;
+    },
+
+    /** A new email (or "" to remove it). Needs the password, since it's a way to log in. */
+    async setEmail(raw, password) {
+      if (!me) throw new Error("Log in first.");
+      const email = raw === "" ? "" : cleanEmail(raw);
+      if (email === null) throw new Error("That doesn't look like an email address.");
+      const d = await whoami();
+      const { auth } = await fromPassword(password, d.salt, d.kdf);
+      await call("/api/auth/email", { auth: true, body: { auth, email } });
+      me = { ...me, email: email || null, hasEmail: !!email };
+      await writeMe(me);
+      tell({});
+      return email;
     },
 
     /** Forgot the password: the recovery code sets a new one. */
@@ -379,14 +524,14 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
         throw new Error("That username and recovery code don't match.");
       }
       const { data } = await call("/api/auth/recover", { body: { login, rauth: r.auth, salt: next.salt, kdf: next.kdf, auth: next.auth, wrapped: next.wrapped } });
-      await signIn(login, data.token, next.dataKey, next.wrapped);
+      await signIn({ login, username: data.username || null, email: login.includes("@") ? login : null }, data.token, next.dataKey, next.wrapped);
     },
 
     async changePassword(oldPassword, newPassword) {
       if (!me) throw new Error("Log in first.");
-      const problem = passwordProblem(newPassword, me.login);
+      const problem = passwordProblem(newPassword, me.username || me.login);
       if (problem) throw new Error(problem);
-      const { data: pre } = await call("/api/auth/prelogin", { body: { login: me.login } });
+      const pre = await whoami();
       const old = await fromPassword(oldPassword, pre.salt, pre.kdf);
       let next;
       try {
@@ -411,12 +556,14 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
 
     async deleteAccount(password) {
       if (!me) throw new Error("Log in first.");
-      const { data: pre } = await call("/api/auth/prelogin", { body: { login: me.login } });
+      const pre = await whoami();
       const { auth } = await fromPassword(password, pre.salt, pre.kdf);
       await call("/api/auth/delete", { auth: true, body: { auth } });
       await forget();
     },
 
+    /** Ask the server who we are again (username, email, Face ID). */
+    refresh,
     /** "Sync now": catch up and save. */
     now: () => round("pull"),
     /**
@@ -432,25 +579,10 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
       }, ms);
     },
 
-    /** A new username (or email). Needs the password. Your backup and this session stay. */
-    async rename(rawLogin, password) {
-      if (!me) throw new Error("Log in first.");
-      const login = cleanLogin(rawLogin);
-      if (!login) throw new Error("Use a username (3 to 32 letters, numbers, dots, dashes or underscores) or an email address.");
-      if (login === me.login) return login;
-      const { data: pre } = await call("/api/auth/prelogin", { body: { login: me.login } });
-      const { auth } = await fromPassword(password, pre.salt, pre.kdf);
-      await call("/api/auth/rename", { auth: true, body: { auth, login } });
-      me = { ...me, login };
-      await writeMe(me);
-      tell({ state: "idle", login });
-      return login;
-    },
-
     /** A fresh recovery code (the old one stops working). Needs the password. */
     async newRecovery(password) {
       if (!me) throw new Error("Log in first.");
-      const { data: pre } = await call("/api/auth/prelogin", { body: { login: me.login } });
+      const pre = await whoami();
       const { auth, encKey } = await fromPassword(password, pre.salt, pre.kdf);
       let key;
       try {

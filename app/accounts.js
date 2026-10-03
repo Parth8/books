@@ -4,7 +4,8 @@ import { h, $ } from "../js/util.js";
 import * as S from "../js/store.js";
 import { rain, shake } from "../js/confetti.js";
 import { sound, feel } from "../js/sfx.js";
-import { createAccount, passwordProblem, strength, cleanLogin } from "../js/account.js";
+import { createAccount, passwordProblem, strength, cleanUsername, cleanEmail, USERNAME_RULE } from "../js/account.js";
+import { passkeysAvailable, passkeyName, cancelled } from "../js/passkey.js";
 import { popup } from "../js/modal.js";
 import { account, setAccount, setState, state } from "./state.js";
 import { apiBase } from "./api.js";
@@ -17,6 +18,24 @@ import { newRecoveryFlow, notReady, renameFlow, safeStrip } from "./settings.js"
 import { mePanel, refreshMe } from "./stats.js";
 
 /* ---------------- accounts ---------------- */
+
+// Can this device log in with Face ID (a passkey that can also unlock the books)?
+export let canPasskey = false;
+passkeysAvailable().then((v) => {
+  canPasskey = v;
+  if (v) refreshMe();
+});
+// iPhone shows the Face ID prompt only straight after a tap, so the login challenge is fetched
+// ahead of time (when the account tile appears), and used on the tap.
+let pkChallenge = null;
+function prefetchChallenge() {
+  if (!canPasskey || account.on || (pkChallenge && Date.now() - pkChallenge.at < 200_000)) return;
+  pkChallenge = { at: Date.now() }; // (one request at a time)
+  account
+    .passkeyChallenge()
+    .then((c) => (pkChallenge = c))
+    .catch(() => (pkChallenge = null));
+}
 
 // null until we've asked the Worker; then true or false.
 export let accountsUp = null;
@@ -66,20 +85,23 @@ export function accountTile() {
   if (accountsUp === false && !account.on) return null;
   const body = [];
   if (!account.on) {
+    prefetchChallenge();
     body.push(
       h("p", { class: "sync-text", text: "Back up your shelves and open them on any device: phone, laptop, the home-screen app. Encrypted on this device with your password, so not even Shelfie can read your books, and your password never leaves your phone." }),
       h(
         "div",
-        { class: "keys two" },
+        { class: canPasskey ? "keys three" : "keys two" },
         key("SIGN UP", "k-lime wide", () => signupFlow(), { sub: "FREE, NO EMAIL NEEDED", aria: "Create an account" }),
         key("🔐", "k-cream", () => loginFlow(), { sub: "LOG IN", aria: "Log in" }),
+        canPasskey ? key("🙂", "k-cream", () => passkeyLoginFlow(), { sub: passkeyName(), aria: `Log in with ${passkeyName().toLowerCase()}` }) : null,
       ),
       h("button", { type: "button", class: "link-btn", text: "FORGOT YOUR PASSWORD?", on: { click: () => recoverFlow() } }),
     );
   } else {
     const line = st.state === "syncing" ? "BACKING UP…" : st.state === "error" ? `⚠ ${st.error}`.toUpperCase() : `BACKED UP ${ago(st.at)}`;
     body.push(
-      h("p", { class: "acct-who" }, h("span", { text: "👤" }), h("b", { text: account.user })),
+      h("p", { class: "acct-who" }, h("span", { text: "👤" }), h("b", { text: account.username ? `@${account.username}` : account.user })),
+      h("p", { class: "acct-email" }, h("span", { text: "✉️" }), h("small", { text: typeof account.email === "string" ? account.email : account.email ? "EMAIL ADDED (HIDDEN: WE ONLY KEEP A SCRAMBLED COPY)" : "NO EMAIL · LOG IN WITH YOUR USERNAME" })),
       h("p", { class: "sync-status" + (st.state === "error" ? " warn" : ""), text: line }),
       h(
         "div",
@@ -92,7 +114,11 @@ export function accountTile() {
         "div",
         { class: "acct-more" },
         h("button", { type: "button", class: "link-btn", text: "NEW RECOVERY CODE", on: { click: () => newRecoveryFlow() } }),
-        h("button", { type: "button", class: "link-btn", text: "CHANGE USERNAME", on: { click: () => renameFlow() } }),
+        h("button", { type: "button", class: "link-btn", text: account.username ? "CHANGE USERNAME" : "PICK A USERNAME", on: { click: () => renameFlow() } }),
+        h("button", { type: "button", class: "link-btn", text: account.email ? "CHANGE EMAIL" : "ADD EMAIL", on: { click: () => emailFlow() } }),
+        canPasskey || account.passkey
+          ? h("button", { type: "button", class: "link-btn", text: account.passkey ? `${passkeyName()}: ON · TURN OFF` : `TURN ON ${passkeyName()}`, on: { click: () => (account.passkey ? passkeyOffFlow() : passkeyOnFlow()) } })
+          : null,
         h("button", { type: "button", class: "link-btn", text: "LOG OUT EVERYWHERE", on: { click: () => logoutFlow({ all: true }) } }),
       ),
     );
@@ -118,25 +144,33 @@ const LOGIN_FIELD = { name: "login", placeholder: "Username or email", autocompl
 export async function signupFlow() {
   if (!(await checkAccounts())) return notReady();
   const m = meter();
+  let pw = "";
   const res = await popup({
     tone: "lime",
     icon: "🔐",
     title: "MAKE AN ACCOUNT",
-    text: "Pick a username (or use your email; we never send you anything). Your password locks your shelves on this device before anything is backed up.",
+    text: "Your username is how you're shown (change it any time). An email is optional: it's just another way to log in, and we never send you anything. Your password locks your shelves on this device before anything is backed up.",
     after: m,
-    fields: [LOGIN_FIELD, { name: "password", type: "password", placeholder: "Password", autocomplete: "new-password", label: "New password" }, { name: "again", type: "password", placeholder: "Password again", autocomplete: "new-password", label: "Password again", enter: "done" }],
+    fields: [
+      { name: "username", placeholder: "Username", autocomplete: "username", label: "Username", max: 33, capitalize: "none" },
+      { name: "email", type: "email", placeholder: "Email (optional)", autocomplete: "email", label: "Email, optional", max: 254, inputmode: "email" },
+      { name: "password", type: "password", placeholder: "Password", autocomplete: "new-password", label: "New password" },
+      { name: "again", type: "password", placeholder: "Password again", autocomplete: "new-password", label: "Password again", enter: "done" },
+    ],
     onInput: (v) => m.update(v.password),
     actions: [
       { id: "cancel", label: "NOT NOW", cancel: true },
       { id: "go", label: "CREATE", primary: true, busy: "LOCKING…" },
     ],
     submit: async (v) => {
-      const login = cleanLogin(v.login);
-      if (!login) throw new Error("Use a username (3 to 32 letters, numbers, dots, dashes or underscores) or an email address.");
-      const problem = passwordProblem(v.password, login);
+      const username = cleanUsername(v.username);
+      if (!username) throw new Error(USERNAME_RULE);
+      if (v.email.trim() && !cleanEmail(v.email)) throw new Error("That doesn't look like an email address. (It's optional: leave it empty if you like.)");
+      const problem = passwordProblem(v.password, username);
       if (problem) throw new Error(problem);
       if (v.password !== v.again) throw new Error("The two passwords don't match.");
-      return account.signup(login, v.password);
+      pw = v.password;
+      return account.signup(username, v.email.trim(), v.password);
     },
   });
   if (res.id !== "go") return;
@@ -146,6 +180,7 @@ export async function signupFlow() {
   await showRecovery(res.result);
   island.say({ icon: "🔐", title: "ACCOUNT MADE", sub: `${state.books.length} books backed up, encrypted`, tone: "lime" });
   refreshMe();
+  offerPasskey(pw);
 }
 
 /** The recovery code, once. Confirmed by typing its last four characters. */
@@ -154,7 +189,7 @@ export async function showRecovery(code) {
   const copy = h("button", { type: "button", class: "install-go quiet", text: "⧉ COPY" });
   const save = h("button", { type: "button", class: "install-go quiet", text: "💾 SAVE AS FILE" });
   save.addEventListener("click", () => {
-    const blob = new Blob([`Shelfie recovery code for ${account?.user || "your account"}\n\n${code}\n\nKeep it somewhere safe. With your username, it sets a new password if you forget yours.\n`], { type: "text/plain" });
+    const blob = new Blob([`Shelfie recovery code for ${account?.username ? `@${account.username}` : account?.user || "your account"}\n\n${code}\n\nKeep it somewhere safe. With your username (or email), it sets a new password if you forget yours.\n`], { type: "text/plain" });
     const a = h("a", { href: URL.createObjectURL(blob), download: "shelfie-recovery-code.txt" });
     document.body.append(a);
     a.click();
@@ -189,24 +224,179 @@ export async function showRecovery(code) {
 
 export async function loginFlow() {
   if (!(await checkAccounts())) return notReady();
+  prefetchChallenge();
+  let pw = "";
   const res = await popup({
     tone: "cyan",
     icon: "👋",
     title: "WELCOME BACK",
-    text: "Log in and your shelves join the ones on this device (nothing here is lost).",
+    text: "Log in with your username or email. Your shelves join the ones on this device (nothing here is lost).",
     fields: [LOGIN_FIELD, { name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "go" }],
     actions: [
       { id: "forgot", label: "FORGOT?" },
+      ...(canPasskey ? [{ id: "face", label: `🙂 ${passkeyName()}` }] : []),
       { id: "go", label: "LOG IN", primary: true, busy: "UNLOCKING…" },
     ],
-    submit: (v) => account.login(v.login, v.password),
+    submit: (v) => {
+      pw = v.password;
+      return account.login(v.login, v.password);
+    },
   });
   if (res.id === "forgot") return recoverFlow();
+  if (res.id === "face") return passkeyLoginFlow();
   if (res.id !== "go") return;
+  welcome();
+  offerPasskey(pw);
+}
+
+/** Logged in: say hello. */
+function welcome(how = "🔓") {
   if (sync.on) sync.disable();
   feel("fanfare", "celebrate");
-  rain({ count: 100, emoji: ["📚", "🔓"] });
-  island.say({ icon: "🔓", title: `HI ${account.user.split("@")[0].toUpperCase().slice(0, 14)}`, sub: `${state.books.length} books on your shelves`, tone: "lime" });
+  rain({ count: 100, emoji: ["📚", how] });
+  island.say({ icon: how, title: `HI ${(account.username || account.user).split("@")[0].toUpperCase().slice(0, 14)}`, sub: `${state.books.length} books on your shelves`, tone: "lime" });
+  refreshMe();
+}
+
+/** Face ID login: straight from the tap (iPhone only allows the prompt then). */
+export async function passkeyLoginFlow() {
+  const ch = pkChallenge?.challenge ? pkChallenge : null;
+  pkChallenge = null; // a challenge is good once
+  try {
+    await account.loginWithPasskey(ch);
+  } catch (err) {
+    if (!cancelled(err)) island.say({ icon: "🙂", title: `${passkeyName()} DIDN'T WORK`, sub: String(err?.message || err).slice(0, 90), tone: "violet" });
+    prefetchChallenge();
+    return;
+  }
+  welcome("🙂");
+}
+
+/**
+ * After the first password login (or sign-up) on a device that can: offer Face ID, once. The
+ * password just typed is used to get it ready in the background (it's never kept).
+ */
+function offerPasskey(pw) {
+  if (!canPasskey || account.passkey || !pw) return;
+  try {
+    if (localStorage.getItem("shelfie.pkOffered")) return;
+    localStorage.setItem("shelfie.pkOffered", "1");
+  } catch {}
+  const ready = account.preparePasskey(pw);
+  ready.catch(() => {});
+  setTimeout(async () => {
+    const res = await popup({
+      tone: "lime",
+      icon: "🙂",
+      title: `LOG IN WITH ${passkeyName()}?`,
+      text: `Next time, one glance and you're in: no password. Apple never shares your face with anyone; Shelfie gets a passkey that only your ${passkeyName() === "FACE ID" ? "Face ID" : "fingerprint or face"} can unlock. Your password keeps working too.`,
+      fields: [],
+      actions: [
+        { id: "later", label: "NOT NOW", cancel: true },
+        { id: "go", label: `TURN ON ${passkeyName()}`, primary: true, busy: "LOOK AT YOUR PHONE…" },
+      ],
+      submit: async () => account.finishPasskey(await ready),
+    });
+    if (res.id === "go") passkeyDone();
+  }, 900);
+}
+
+function passkeyDone() {
+  feel("levelup", "success");
+  rain({ count: 80, emoji: ["🙂", "✨", "🔓"] });
+  island.say({ icon: "🙂", title: `${passkeyName()} IS ON`, sub: "Next time, just look at your phone", tone: "lime" });
+  refreshMe();
+}
+
+/** Turn Face ID on from the account tile: the password first, then the prompt on a tap. */
+async function passkeyOnFlow() {
+  const first = await popup({
+    tone: "lime",
+    icon: "🙂",
+    title: `TURN ON ${passkeyName()}`,
+    text: "Your password, once, to unlock the key that Face ID will look after. It isn't stored anywhere.",
+    fields: [
+      { name: "user", type: "text", value: account.username || account.user, autocomplete: "username", label: "Username", max: 254 },
+      { name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "done" },
+    ],
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      { id: "go", label: "NEXT", primary: true, busy: "CHECKING…" },
+    ],
+    submit: (v) => account.preparePasskey(v.password),
+  });
+  if (first.id !== "go") return;
+  const res = await popup({
+    tone: "lime",
+    icon: "🙂",
+    title: "ONE GLANCE",
+    text: "Tap below and look at your phone. Apple asks to save a passkey for Shelfie: say yes.",
+    fields: [],
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      { id: "go", label: `TURN ON ${passkeyName()}`, primary: true, busy: "LOOK AT YOUR PHONE…" },
+    ],
+    submit: () => account.finishPasskey(first.result),
+  });
+  if (res.id === "go") passkeyDone();
+}
+
+async function passkeyOffFlow() {
+  const res = await popup({
+    tone: "cream",
+    icon: "🙂",
+    title: `TURN OFF ${passkeyName()}?`,
+    text: "You'll log in with your password. (The passkey may still sit in your phone's Passwords app; it won't work any more, so you can delete it there.)",
+    fields: [],
+    actions: [
+      { id: "cancel", label: "KEEP IT", cancel: true },
+      { id: "go", label: "TURN OFF", primary: true, busy: "ONE MOMENT…" },
+    ],
+    submit: () => account.disablePasskey(),
+  });
+  if (res.id !== "go") return;
+  island.say({ icon: "🔑", title: `${passkeyName()} OFF`, sub: "Log in with your password", tone: "violet" });
+  refreshMe();
+}
+
+/** Add, change or remove the email. Needs the password: it's a way to log in. */
+async function emailFlow() {
+  const known = typeof account.email === "string" ? account.email : "";
+  const res = await popup({
+    tone: "cyan",
+    icon: "✉️",
+    title: account.email ? "CHANGE EMAIL" : "ADD EMAIL",
+    text: "Another way to log in, alongside your username. We never send you anything, and we only keep a scrambled copy of it.",
+    fields: [
+      { name: "email", type: "email", value: known, placeholder: "Email", autocomplete: "email", label: "Email", max: 254, inputmode: "email" },
+      { name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "done" },
+    ],
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      ...(account.email && account.username ? [{ id: "remove", label: "REMOVE" }] : []),
+      { id: "go", label: "SAVE", primary: true, busy: "SAVING…" },
+    ],
+    submit: (v) => account.setEmail(v.email.trim(), v.password),
+  });
+  if (res.id === "remove") {
+    const pw = await popup({
+      tone: "cream",
+      icon: "✉️",
+      title: "REMOVE EMAIL?",
+      text: `You'll log in with @${account.username}.`,
+      fields: [{ name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "done" }],
+      actions: [
+        { id: "cancel", label: "KEEP IT", cancel: true },
+        { id: "go", label: "REMOVE", primary: true, busy: "REMOVING…" },
+      ],
+      submit: (v) => account.setEmail("", v.password),
+    });
+    if (pw.id === "go") island.say({ icon: "✉️", title: "EMAIL REMOVED", sub: `Log in with @${account.username}`, tone: "lime" });
+    return refreshMe();
+  }
+  if (res.id !== "go") return;
+  feel("levelup", "success");
+  island.say({ icon: "✉️", title: "EMAIL SAVED", sub: "Log in with it, or your username", tone: "lime" });
   refreshMe();
 }
 
@@ -239,6 +429,9 @@ async function recoverFlow() {
   if (sync.on) sync.disable();
   feel("fanfare", "celebrate");
   island.say({ icon: "🛟", title: "NEW PASSWORD SET", sub: "Your recovery code still works", tone: "lime" });
+  try {
+    localStorage.removeItem("shelfie.pkOffered"); // a good moment to offer Face ID again
+  } catch {}
   refreshMe();
 }
 

@@ -14,15 +14,22 @@
  *                          was built on (a mismatch answers 409 with the current copy)
  *
  * Accounts (end-to-end encrypted; see "Accounts" below for the whole design):
+ *   (login = your username or your email; either works)
  *   POST /api/auth/prelogin         { login }                      → { salt, kdf }
- *   POST /api/auth/signup           { login, salt, kdf, auth, wrapped, rauth, rwrapped } → { token }
- *   POST /api/auth/login            { login, auth }                → { token, wrapped }
+ *   POST /api/auth/signup           { username, email?, salt, kdf, auth, wrapped, rauth, rwrapped } → { token }
+ *   POST /api/auth/login            { login, auth }                → { token, wrapped, username }
+ *   POST /api/auth/me               { login? }          (Bearer)   → { username, email, passkeys, salt, kdf }
+ *   POST /api/auth/username         { username }        (Bearer)   → { ok }   (no password needed)
+ *   POST /api/auth/email            { auth, email }     (Bearer)   → { ok }   ("" removes it)
  *   POST /api/auth/logout           { all? }            (Bearer)   → { ok }
  *   POST /api/auth/password         { auth, salt, kdf, newAuth, wrapped } (Bearer) → { token }
  *   POST /api/auth/recover/begin    { login }                      → { rwrapped }
  *   POST /api/auth/recover          { login, rauth, salt, kdf, auth, wrapped } → { token }
  *   POST /api/auth/recovery         { auth, rauth, rwrapped } (Bearer) → { ok }   (a new recovery code)
- *   POST /api/auth/rename           { auth, login }     (Bearer)   → { ok }   (a new username or email)
+ *   POST /api/auth/passkey/challenge { for: "create" | "get" } (Bearer for create) → { challenge, rpId, user }
+ *   POST /api/auth/passkey/register  { auth, challenge, id, clientDataJSON, attestationObject, pwrapped } (Bearer) → { ok }
+ *   POST /api/auth/passkey/login     { challenge, id, clientDataJSON, authenticatorData, signature } → { token, pwrapped, wrapped, username }
+ *   POST /api/auth/passkey/remove    {}                 (Bearer)   → { ok }
  *   POST /api/auth/delete           { auth }            (Bearer)   → { ok }
  *   GET  /api/vault                                     (Bearer)   → { rev, iv, ct } or { rev: 0 }
  *   PUT  /api/vault                 { iv, ct, base, op } (Bearer)  → { rev } or 409 with the current copy
@@ -97,7 +104,7 @@ export default {
     try {
       const path = url.pathname;
       const syncId = /^\/api\/sync\/([0-9a-f]{64})$/.exec(path)?.[1];
-      const authRoute = /^\/api\/auth\/(prelogin|signup|login|logout|password|recovery|rename|recover\/begin|recover|delete)$/.exec(path)?.[1];
+      const authRoute = /^\/api\/auth\/(prelogin|signup|login|logout|password|recovery|me|username|email|recover\/begin|recover|delete|passkey\/(?:challenge|register|login|remove))$/.exec(path)?.[1];
       const allowed_ =
         request.method === "GET" ||
         (request.method === "PUT" && (syncId || path === "/api/vault")) ||
@@ -269,7 +276,16 @@ async function syncPut(id, request, env) {
 // stores only ciphertext. A stolen database holds no readable books and no usable passwords.
 //
 // What this Worker stores (all in D1):
-//   users     id = HMAC(AUTH_SECRET, login): the username or email itself is never stored.
+//   users     id: the account's own id. (Older accounts: HMAC(AUTH_SECRET, the login they
+//             signed up with).) uname: the username, which is public anyway (it's shown as
+//             @username). The email is never stored, only its HMAC in names.
+//   names     h = HMAC(AUTH_SECRET, a username or email) → the account it logs in to, and which
+//             kind it is. So username, email and password are three separate things: change one
+//             and the others stay.
+//   passkeys  Face ID / Touch ID: the passkey's public key (it can only check signatures), and
+//             the data key wrapped with a secret only that passkey can produce (WebAuthn PRF).
+//             A stolen database can't log in with these, and can't open the wrapped key.
+//   challenges one-time WebAuthn challenges, five minutes each.
 //             auth = HMAC(AUTH_SECRET, authKey). Even with the database, guessing a password
 //             needs AUTH_SECRET too, and 600,000 PBKDF2 rounds per guess.
 //   sessions  SHA-256 of each session token (the token itself only lives on the device).
@@ -295,7 +311,13 @@ const LIMITS = {
   recover: [["ip", 10, 3600], ["login", 5, 3600]],
   password: [["user", 10, 3600]],
   recovery: [["user", 10, 3600]],
-  rename: [["user", 5, 3600]],
+  me: [["user", 120, 3600]],
+  username: [["user", 10, 3600]],
+  email: [["user", 5, 3600]],
+  pkChallenge: [["ip", 30, 600]],
+  pkRegister: [["user", 10, 3600]],
+  pkLogin: [["ip", 20, 600]],
+  pkRemove: [["user", 10, 3600]],
   delete: [["user", 5, 3600]],
 };
 
@@ -306,6 +328,8 @@ const toHex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padSta
 const toB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const b64url = (buf) => toB64(buf).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const fromB64url = (s) => fromB64(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
+const fromHex = (h) => Uint8Array.from(h.match(/../g) || [], (x) => parseInt(x, 16));
 
 const hmacKeys = new Map();
 async function hmac(env, label, data) {
@@ -332,13 +356,28 @@ function sameBytes(a, b) {
   return diff === 0;
 }
 
+const USERNAME = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+const EMAIL = /^[^\s@<>"]{1,64}@[^\s@<>"]{1,189}\.[^\s@<>".]{2,}$/;
+const norm = (raw) => String(raw ?? "").normalize("NFKC").trim().toLowerCase();
+
 /** A username (3 to 32 of a-z 0-9 . _ -) or an email address, normalised. */
 export function cleanLogin(raw) {
-  const v = String(raw ?? "").normalize("NFKC").trim().toLowerCase();
-  if (/^[a-z0-9][a-z0-9._-]{2,31}$/.test(v)) return v;
-  if (v.length <= 254 && /^[^\s@<>"]{1,64}@[^\s@<>"]{1,189}\.[^\s@<>".]{2,}$/.test(v)) return v;
-  throw new ApiError(400, "bad_login", "Use a username (3 to 32 letters, numbers, dots, dashes or underscores) or an email address.");
+  const v = norm(raw);
+  if (USERNAME.test(v)) return v;
+  if (v.length <= 254 && EMAIL.test(v)) return v;
+  throw new ApiError(400, "bad_login", "Use your username or your email address.");
 }
+export function cleanUsername(raw) {
+  const v = norm(raw).replace(/^@/, "");
+  if (USERNAME.test(v)) return v;
+  throw new ApiError(400, "bad_username", "A username is 3 to 32 letters, numbers, dots, dashes or underscores.");
+}
+export function cleanEmail(raw) {
+  const v = norm(raw);
+  if (v.length <= 254 && EMAIL.test(v)) return v;
+  throw new ApiError(400, "bad_email", "That doesn't look like an email address.");
+}
+const kindOf = (login) => (login.includes("@") ? "email" : "user");
 
 const B64_ = /^[A-Za-z0-9+/]+={0,2}$/;
 function b64Field(v, bytes, name) {
@@ -382,7 +421,7 @@ const schemaReady = new WeakMap(); // per database binding, checked once per iso
 function schema(db) {
   if (schemaReady.has(db)) return schemaReady.get(db);
   const ready = db
-    .prepare("SELECT op FROM vaults LIMIT 0")
+    .prepare("SELECT v.op, u.uname, n.h, p.cid, c.c FROM vaults v, users u, names n, passkeys p, challenges c LIMIT 0")
     .all()
     .catch(async () => {
       await db.batch([
@@ -391,9 +430,15 @@ function schema(db) {
         db.prepare("CREATE INDEX IF NOT EXISTS sessions_uid ON sessions (uid)"),
         db.prepare("CREATE TABLE IF NOT EXISTS vaults (uid TEXT PRIMARY KEY, rev INTEGER NOT NULL, iv TEXT NOT NULL, ct TEXT NOT NULL, updated INTEGER NOT NULL, op TEXT)"),
         db.prepare("CREATE TABLE IF NOT EXISTS hits (k TEXT PRIMARY KEY, win INTEGER NOT NULL, n INTEGER NOT NULL, exp INTEGER NOT NULL)"),
+        db.prepare("CREATE TABLE IF NOT EXISTS names (h TEXT PRIMARY KEY, uid TEXT NOT NULL, kind TEXT NOT NULL)"),
+        db.prepare("CREATE INDEX IF NOT EXISTS names_uid ON names (uid)"),
+        db.prepare("CREATE TABLE IF NOT EXISTS passkeys (cid TEXT PRIMARY KEY, uid TEXT NOT NULL, alg INTEGER NOT NULL, pub TEXT NOT NULL, pwrapped TEXT NOT NULL, created INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)"),
+        db.prepare("CREATE INDEX IF NOT EXISTS passkeys_uid ON passkeys (uid)"),
+        db.prepare("CREATE TABLE IF NOT EXISTS challenges (c TEXT PRIMARY KEY, uid TEXT, kind TEXT NOT NULL, exp INTEGER NOT NULL)"),
       ]);
-      // Databases made before the op column existed get it now.
+      // Databases made before these columns existed get them now.
       await db.prepare("ALTER TABLE vaults ADD COLUMN op TEXT").run().catch(() => {});
+      await db.prepare("ALTER TABLE users ADD COLUMN uname TEXT").run().catch(() => {});
     })
     .catch((err) => {
       schemaReady.delete(db);
@@ -471,13 +516,241 @@ async function checkAuth(env, user, authB64, field, now) {
 }
 
 const getUser = (env, id) => env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(id).first();
+const hasNames = async (env, uid) => !!(await env.DB.prepare("SELECT 1 AS x FROM names WHERE uid = ? LIMIT 1").bind(uid).first());
+
+/**
+ * The account a username or email logs in to, or null. Accounts made before usernames and
+ * emails were separate have their login as their id, until they're upgraded (see adopt).
+ */
+async function resolve(env, login) {
+  const h = await userId(env, login);
+  const row = await env.DB.prepare("SELECT uid FROM names WHERE h = ?").bind(h).first();
+  if (row) return getUser(env, row.uid);
+  const user = await getUser(env, h);
+  if (!user || (await hasNames(env, user.id))) return null; // (that old login was changed away)
+  return user;
+}
+
+/** Is this username or email someone else's? */
+async function taken(env, h, uid) {
+  const row = await env.DB.prepare("SELECT uid FROM names WHERE h = ?").bind(h).first();
+  if (row) return row.uid !== uid;
+  const old = await getUser(env, h);
+  return !!old && old.id !== uid && !(await hasNames(env, old.id));
+}
+
+/**
+ * Upgrades an older account: its login becomes a username or an email row. `login` is the login
+ * it was made with, if known (it must hash to the account's id); otherwise the old login is kept
+ * working as it is.
+ */
+async function adopt(env, user, login) {
+  if (await hasNames(env, user.id)) return;
+  const known = login && (await userId(env, login)) === user.id;
+  const kind = known ? kindOf(login) : "legacy";
+  const steps = [env.DB.prepare("INSERT INTO names (h, uid, kind) VALUES (?, ?, ?) ON CONFLICT (h) DO NOTHING").bind(user.id, user.id, kind)];
+  if (kind === "user") steps.push(env.DB.prepare("UPDATE users SET uname = ? WHERE id = ?").bind(login, user.id));
+  await env.DB.batch(steps);
+  if (kind === "user") user.uname = login;
+}
+
+/* ---------------- passkeys (Face ID / Touch ID) ---------------- */
+// Standard WebAuthn, checked with WebCrypto: no libraries. A passkey is a key pair made inside
+// the phone's secure hardware; the private half never leaves it (and syncs only through the
+// user's own iCloud Keychain or password manager). Face ID unlocks it on the phone; this Worker
+// only ever sees the public key and signatures. Apple never shares anything about your face.
+
+const td = new TextDecoder();
+
+/** The site's own name for passkeys: its host (the page asks for the same one). */
+function rpIdOf(request) {
+  try {
+    return new URL(request.headers.get("Origin") || "").hostname;
+  } catch {
+    throw new ApiError(400, "bad_origin", "Unknown site.");
+  }
+}
+
+async function newChallenge(env, request, uid, kind, now) {
+  const c = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  await env.DB.prepare("INSERT INTO challenges (c, uid, kind, exp) VALUES (?, ?, ?, ?)").bind(c, uid, kind, now + 300_000).run();
+  return { challenge: c, rpId: rpIdOf(request) };
+}
+
+/** A challenge is good once: it's deleted as it's used. */
+async function useChallenge(env, c, kind, uid, now) {
+  if (typeof c !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(c)) throw new ApiError(400, "bad_body", "Missing challenge.");
+  const row = await env.DB.prepare("DELETE FROM challenges WHERE c = ? RETURNING uid, kind, exp").bind(c).first();
+  if (!row || row.kind !== kind || row.exp < now || (uid && row.uid !== uid)) throw new ApiError(401, "bad_challenge", "That took a little too long. Try again.");
+}
+
+function idField(v) {
+  if (typeof v !== "string" || !/^[A-Za-z0-9_-]{16,1400}$/.test(v)) throw new ApiError(400, "bad_body", "Odd passkey id.");
+  return v;
+}
+function b64urlField(v, name, max) {
+  if (typeof v !== "string" || v.length > max || !/^[A-Za-z0-9_-]+$/.test(v)) throw new ApiError(400, "bad_body", `Missing or odd ${name}.`);
+  return fromB64url(v);
+}
+
+/** A small CBOR reader (RFC 8949): enough for WebAuthn's attestation objects and COSE keys. */
+export function cbor(bytes, start = 0) {
+  let i = start;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const bad = () => {
+    throw new ApiError(400, "bad_passkey", "That passkey answer couldn't be read.");
+  };
+  const need = (n) => (i + n > bytes.length ? bad() : 0);
+  const len = (info) => {
+    if (info < 24) return info;
+    if (info === 24) return need(1), bytes[i++];
+    if (info === 25) return need(2), (i += 2), dv.getUint16(i - 2);
+    if (info === 26) return need(4), (i += 4), dv.getUint32(i - 4);
+    return bad();
+  };
+  const item = (depth) => {
+    if (depth > 8) bad();
+    need(1);
+    const b = bytes[i++];
+    const info = b & 31;
+    switch (b >> 5) {
+      case 0:
+        return len(info);
+      case 1:
+        return -1 - len(info);
+      case 2: {
+        const n = len(info);
+        need(n);
+        return bytes.slice(i, (i += n));
+      }
+      case 3: {
+        const n = len(info);
+        need(n);
+        return td.decode(bytes.slice(i, (i += n)));
+      }
+      case 4: {
+        const n = len(info);
+        if (n > 64) bad();
+        return Array.from({ length: n }, () => item(depth + 1));
+      }
+      case 5: {
+        const n = len(info);
+        if (n > 64) bad();
+        const m = new Map();
+        for (let k = 0; k < n; k++) m.set(item(depth + 1), item(depth + 1));
+        return m;
+      }
+      case 7:
+        if (info === 20) return false;
+        if (info === 21) return true;
+        if (info === 22) return null;
+        return bad();
+      default:
+        return bad();
+    }
+  };
+  const value = item(0);
+  return { value, end: i };
+}
+
+/** A COSE public key → { alg, jwk }. ES256 (Apple, Google, most) and RS256 (Windows Hello). */
+function coseToJwk(m) {
+  const b = (v) => (v instanceof Uint8Array ? b64url(v) : null);
+  const alg = m.get(3);
+  if (m.get(1) === 2 && alg === -7 && m.get(-1) === 1 && b(m.get(-2)) && b(m.get(-3))) return { alg, jwk: { kty: "EC", crv: "P-256", x: b(m.get(-2)), y: b(m.get(-3)) } };
+  if (m.get(1) === 3 && alg === -257 && b(m.get(-1)) && b(m.get(-2))) return { alg, jwk: { kty: "RSA", n: b(m.get(-1)), e: b(m.get(-2)), alg: "RS256" } };
+  throw new ApiError(400, "bad_passkey", "This kind of passkey isn't supported. Try your phone's built-in Face ID or fingerprint.");
+}
+const importPub = (alg, jwk) =>
+  crypto.subtle.importKey("jwk", jwk, alg === -7 ? { name: "ECDSA", namedCurve: "P-256" } : { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+
+/** An ECDSA signature as WebAuthn sends it (DER) → the raw r‖s WebCrypto wants. */
+export function derToRaw(der) {
+  const bad = () => {
+    throw new ApiError(401, "bad_passkey", "That passkey signature isn't valid.");
+  };
+  if (der[0] !== 0x30) bad();
+  let i = der[1] & 0x80 ? 2 + (der[1] & 0x7f) : 2;
+  const int = () => {
+    if (der[i] !== 0x02) bad();
+    const n = der[i + 1];
+    let v = der.slice(i + 2, i + 2 + n);
+    i += 2 + n;
+    while (v.length > 32 && v[0] === 0) v = v.slice(1);
+    if (v.length > 32) bad();
+    const out = new Uint8Array(32);
+    out.set(v, 32 - v.length);
+    return out;
+  };
+  const r = int();
+  const s = int();
+  const raw = new Uint8Array(64);
+  raw.set(r, 0);
+  raw.set(s, 32);
+  return raw;
+}
+
+/** The checks both ceremonies share: what the browser signed, for this site, with Face ID. */
+async function checkClient(request, body, type, cdBytes, authData) {
+  let cd;
+  try {
+    cd = JSON.parse(td.decode(cdBytes));
+  } catch {
+    throw new ApiError(400, "bad_passkey", "That passkey answer couldn't be read.");
+  }
+  if (cd.type !== type || cd.challenge !== body.challenge || cd.origin !== request.headers.get("Origin") || cd.crossOrigin === true) throw new ApiError(401, "bad_passkey", "That passkey answer wasn't for this site.");
+  if (authData.length < 37) throw new ApiError(400, "bad_passkey", "That passkey answer couldn't be read.");
+  const rpHash = new Uint8Array(await crypto.subtle.digest("SHA-256", te.encode(rpIdOf(request))));
+  if (!sameBytes(authData.slice(0, 32), rpHash)) throw new ApiError(401, "bad_passkey", "That passkey belongs to another site.");
+  const flags = authData[32];
+  // UP: someone was there. UV: and unlocked it (Face ID, Touch ID or the phone's passcode).
+  if ((flags & 0x05) !== 0x05) throw new ApiError(401, "bad_passkey", "Face ID (or your passcode) has to confirm it's you.");
+  return flags;
+}
+
+async function verifyAttestation(request, body) {
+  const cdBytes = b64urlField(body.clientDataJSON, "clientDataJSON", 2000);
+  const att = cbor(b64urlField(body.attestationObject, "attestationObject", 8000)).value;
+  const authData = att instanceof Map ? att.get("authData") : null;
+  if (!(authData instanceof Uint8Array)) throw new ApiError(400, "bad_passkey", "That passkey answer couldn't be read.");
+  const flags = await checkClient(request, body, "webauthn.create", cdBytes, authData);
+  if (!(flags & 0x40) || authData.length < 55) throw new ApiError(400, "bad_passkey", "That passkey answer has no key in it.");
+  const idLen = (authData[53] << 8) | authData[54];
+  if (idLen < 16 || idLen > 1023 || 55 + idLen > authData.length) throw new ApiError(400, "bad_passkey", "That passkey answer couldn't be read.");
+  const credId = authData.slice(55, 55 + idLen);
+  if (b64url(credId) !== idField(body.id)) throw new ApiError(400, "bad_passkey", "That passkey answer doesn't add up.");
+  const key = cbor(authData, 55 + idLen).value;
+  if (!(key instanceof Map)) throw new ApiError(400, "bad_passkey", "That passkey answer has no key in it.");
+  const { alg, jwk } = coseToJwk(key);
+  await importPub(alg, jwk).catch(() => {
+    throw new ApiError(400, "bad_passkey", "That passkey's key isn't valid.");
+  });
+  return { cid: b64url(credId), alg, pub: JSON.stringify(jwk) };
+}
+
+async function verifyAssertion(request, body, pk) {
+  const cdBytes = b64urlField(body.clientDataJSON, "clientDataJSON", 2000);
+  const authData = b64urlField(body.authenticatorData, "authenticatorData", 2000);
+  const sig = b64urlField(body.signature, "signature", 1000);
+  await checkClient(request, body, "webauthn.get", cdBytes, authData);
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", cdBytes));
+  const signed = new Uint8Array(authData.length + 32);
+  signed.set(authData, 0);
+  signed.set(hash, authData.length);
+  const key = await importPub(pk.alg, JSON.parse(pk.pub));
+  const ok =
+    pk.alg === -7
+      ? await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, derToRaw(sig), signed)
+      : await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, sig, signed);
+  if (!ok) throw new ApiError(401, "bad_passkey", "That passkey signature isn't valid.");
+}
 
 async function accountRoute(name, request, env, ctx) {
   if (!accountsOn(env)) throw new ApiError(503, "accounts_not_configured", "Accounts aren't switched on yet.");
   await schema(env.DB);
   const now = Date.now();
   // Now and then (on sign-in routes, never on backups), sweep out expired counters and sessions.
-  if (name && Math.random() < 0.02) ctx.waitUntil(env.DB.batch([env.DB.prepare("DELETE FROM hits WHERE exp < ?").bind(Math.floor(now / 1000)), env.DB.prepare("DELETE FROM sessions WHERE expires < ?").bind(now)]).catch(() => {}));
+  if (name && Math.random() < 0.02) ctx.waitUntil(env.DB.batch([env.DB.prepare("DELETE FROM hits WHERE exp < ?").bind(Math.floor(now / 1000)), env.DB.prepare("DELETE FROM sessions WHERE expires < ?").bind(now), env.DB.prepare("DELETE FROM challenges WHERE exp < ?").bind(now)]).catch(() => {}));
 
   if (!name) {
     // The vault.
@@ -502,12 +775,12 @@ async function accountRoute(name, request, env, ctx) {
     return [409, { error: "conflict", message: "Changed elsewhere first.", rev: cur?.rev || 0, iv: cur?.iv, ct: cur?.ct }];
   }
 
-  const body = await readJson(request);
+  const body = await readJson(request, name.startsWith("passkey") ? 16384 : 4096);
 
   if (name === "prelogin") {
     const login = cleanLogin(body.login);
     await limits(env, "prelogin", request, { login }, now);
-    const user = await getUser(env, await userId(env, login));
+    const user = await resolve(env, login);
     // Unknown accounts get a made-up salt that never changes, so this can't be used to find
     // out who has an account.
     if (user) return [200, { salt: user.salt, kdf: user.kdf }];
@@ -515,8 +788,16 @@ async function accountRoute(name, request, env, ctx) {
   }
 
   if (name === "signup") {
-    const login = cleanLogin(body.login);
-    await limits(env, "signup", request, { login }, now);
+    // A username, and optionally an email. (Older pages send one "login": a username or email.)
+    let username = body.username != null ? cleanUsername(body.username) : null;
+    let email = body.email ? cleanEmail(body.email) : null;
+    if (body.username == null) {
+      const login = cleanLogin(body.login);
+      if (kindOf(login) === "user") username = login;
+      else email = login;
+    }
+    if (!username && !email) throw new ApiError(400, "bad_username", "Pick a username.");
+    await limits(env, "signup", request, { login: username || email }, now);
     const row = {
       salt: b64Field(body.salt, 16, "salt"),
       kdf: kdfField(body.kdf),
@@ -525,26 +806,36 @@ async function accountRoute(name, request, env, ctx) {
       rauth: await authHash(env, b64Field(body.rauth, 32, "rauth")),
       rwrapped: wrappedField(body.rwrapped, "rwrapped"),
     };
-    const id = await userId(env, login);
-    const res = await env.DB.prepare("INSERT INTO users (id, salt, kdf, auth, wrapped, rauth, rwrapped, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING")
-      .bind(id, row.salt, row.kdf, row.auth, row.wrapped, row.rauth, row.rwrapped, now)
-      .run();
-    if (!res.meta?.changes) throw new ApiError(409, "taken", "That username is taken. Try another, or log in.");
+    const uh = username && (await userId(env, username));
+    const eh = email && (await userId(env, email));
+    if (uh && (await taken(env, uh, null))) throw new ApiError(409, "taken", "That username is taken. Try another, or log in.");
+    if (eh && (await taken(env, eh, null))) throw new ApiError(409, "email_taken", "That email already has an account. Log in instead.");
+    const id = toHex(crypto.getRandomValues(new Uint8Array(32)));
+    try {
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO users (id, salt, kdf, auth, wrapped, rauth, rwrapped, created, uname) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, row.salt, row.kdf, row.auth, row.wrapped, row.rauth, row.rwrapped, now, username),
+        ...(uh ? [env.DB.prepare("INSERT INTO names (h, uid, kind) VALUES (?, ?, 'user')").bind(uh, id)] : []),
+        ...(eh ? [env.DB.prepare("INSERT INTO names (h, uid, kind) VALUES (?, ?, 'email')").bind(eh, id)] : []),
+      ]);
+    } catch {
+      throw new ApiError(409, "taken", "That username is taken. Try another, or log in."); // (taken a moment ago)
+    }
     return [200, { token: await newSession(env, id, now) }];
   }
 
   if (name === "login") {
     const login = cleanLogin(body.login);
     await limits(env, "login", request, { login }, now);
-    const user = await getUser(env, await userId(env, login));
+    const user = await resolve(env, login);
     await checkAuth(env, user, b64Field(body.auth, 32, "auth"), "auth", now);
-    return [200, { token: await newSession(env, user.id, now), wrapped: user.wrapped }];
+    await adopt(env, user, login);
+    return [200, { token: await newSession(env, user.id, now), wrapped: user.wrapped, username: user.uname || null }];
   }
 
   if (name === "recover/begin") {
     const login = cleanLogin(body.login);
     await limits(env, "recoverBegin", request, { login }, now);
-    const user = await getUser(env, await userId(env, login));
+    const user = await resolve(env, login);
     if (user) return [200, { rwrapped: user.rwrapped }];
     // A made-up (and unopenable) one for unknown accounts, the same every time.
     const fake = await hmac(env, "rwrapped", login);
@@ -555,7 +846,7 @@ async function accountRoute(name, request, env, ctx) {
   if (name === "recover") {
     const login = cleanLogin(body.login);
     await limits(env, "recover", request, { login }, now);
-    const user = await getUser(env, await userId(env, login));
+    const user = await resolve(env, login);
     await checkAuth(env, user, b64Field(body.rauth, 32, "rauth"), "rauth", now);
     const salt = b64Field(body.salt, 16, "salt");
     const kdf = kdfField(body.kdf);
@@ -566,7 +857,29 @@ async function accountRoute(name, request, env, ctx) {
       env.DB.prepare("UPDATE users SET salt = ?, kdf = ?, auth = ?, wrapped = ?, fails = 0, locked = 0 WHERE id = ?").bind(salt, kdf, auth, wrapped, user.id),
       env.DB.prepare("DELETE FROM sessions WHERE uid = ?").bind(user.id),
     ]);
-    return [200, { token: await newSession(env, user.id, now) }];
+    await adopt(env, user, login);
+    return [200, { token: await newSession(env, user.id, now), username: user.uname || null }];
+  }
+
+  if (name === "passkey/challenge" && body.for !== "create") {
+    // Logging in with Face ID: anyone may ask; the challenge is good once, for five minutes.
+    await limits(env, "pkChallenge", request, {}, now);
+    return [200, await newChallenge(env, request, null, "get", now)];
+  }
+
+  if (name === "passkey/login") {
+    await limits(env, "pkLogin", request, {}, now);
+    await useChallenge(env, body.challenge, "get", null, now);
+    const cid = idField(body.id);
+    const pk = await env.DB.prepare("SELECT * FROM passkeys WHERE cid = ?").bind(cid).first();
+    if (!pk) throw new ApiError(401, "bad_passkey", "That passkey isn't linked to an account any more. Log in with your password.");
+    const user = await getUser(env, pk.uid);
+    if (!user) throw new ApiError(401, "bad_passkey", "That passkey isn't linked to an account any more. Log in with your password.");
+    await verifyAssertion(request, body, pk);
+    await env.DB.prepare("UPDATE passkeys SET used = ? WHERE cid = ?").bind(now, cid).run();
+    // (wrapped too: changing the password later re-wraps the same key. Only after Face ID, and it
+    // opens nothing without the password.)
+    return [200, { token: await newSession(env, user.id, now), pwrapped: pk.pwrapped, wrapped: user.wrapped, username: user.uname || null }];
   }
 
   // The rest need a session.
@@ -605,27 +918,77 @@ async function accountRoute(name, request, env, ctx) {
     return [200, { ok: true }];
   }
 
-  if (name === "rename") {
-    // A new username (or email). The account moves to the new name's key, with its backup and
-    // sessions, in one all-or-nothing batch. The password doesn't change (it never used the name).
-    await limits(env, "rename", request, { user: uid }, now);
-    const login = cleanLogin(body.login);
+  if (name === "me") {
+    // Who this session is. An older account's device sends the login it signed up with, so the
+    // account can be upgraded to a separate username and email.
+    await limits(env, "me", request, { user: uid }, now);
+    const user = await getUser(env, uid);
+    if (!user) throw new ApiError(401, "signed_out", "Please log in again.");
+    let login = null;
+    try {
+      login = body.login ? cleanLogin(body.login) : null;
+    } catch {}
+    await adopt(env, user, login);
+    const email = !!(await env.DB.prepare("SELECT 1 AS x FROM names WHERE uid = ? AND kind = 'email'").bind(uid).first());
+    const pk = await env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys WHERE uid = ?").bind(uid).first();
+    return [200, { username: user.uname || null, email, passkeys: pk?.n || 0, salt: user.salt, kdf: user.kdf }];
+  }
+
+  if (name === "username" || name === "email") {
+    // A new username needs no password (it's only what you're called). A new email does, since
+    // it's how you log in.
+    await limits(env, name, request, { user: uid }, now);
+    const user = await getUser(env, uid);
+    if (name === "email") await checkAuth(env, user, b64Field(body.auth, 32, "auth"), "auth", now);
+    await adopt(env, user, null);
+    const kind = name === "username" ? "user" : "email";
+    const value = name === "username" ? cleanUsername(body.username) : body.email === "" ? "" : cleanEmail(body.email);
+    if (value === "") {
+      if (!user.uname) throw new ApiError(400, "need_username", "Pick a username first, so you can still log in.");
+      await env.DB.prepare("DELETE FROM names WHERE uid = ? AND kind = 'email'").bind(uid).run();
+      return [200, { ok: true }];
+    }
+    const h = await userId(env, value);
+    if (await taken(env, h, uid)) throw new ApiError(409, "taken", kind === "user" ? "That username is taken. Try another." : "That email already has an account.");
+    const steps = [
+      // The old one stops working; the other kind (and an old login of unknown kind) stays.
+      env.DB.prepare("DELETE FROM names WHERE uid = ? AND kind = ?").bind(uid, kind),
+      env.DB.prepare("INSERT INTO names (h, uid, kind) VALUES (?, ?, ?) ON CONFLICT (h) DO UPDATE SET kind = excluded.kind WHERE names.uid = excluded.uid").bind(h, uid, kind),
+    ];
+    if (kind === "user") steps.push(env.DB.prepare("UPDATE users SET uname = ? WHERE id = ?").bind(value, uid));
+    try {
+      await env.DB.batch(steps);
+    } catch {
+      throw new ApiError(409, "taken", "That's taken. Try another.");
+    }
+    return [200, { ok: true }];
+  }
+
+  if (name === "passkey/challenge") {
+    await limits(env, "pkChallenge", request, {}, now);
+    const user = await getUser(env, uid);
+    return [200, { ...(await newChallenge(env, request, uid, "create", now)), user: { id: b64url(fromHex(uid).slice(0, 32)), name: user?.uname || "Shelfie reader" } }];
+  }
+
+  if (name === "passkey/register") {
+    // Turning on Face ID needs the password, so a stolen session can't add its own passkey.
+    await limits(env, "pkRegister", request, { user: uid }, now);
     const user = await getUser(env, uid);
     await checkAuth(env, user, b64Field(body.auth, 32, "auth"), "auth", now);
-    const next = await userId(env, login);
-    if (next === uid) return [200, { ok: true }];
-    if (await getUser(env, next)) throw new ApiError(409, "taken", "That username is taken. Try another.");
-    try {
-      await env.DB.batch([
-        env.DB.prepare("INSERT INTO users (id, salt, kdf, auth, wrapped, rauth, rwrapped, created, fails, locked) SELECT ?, salt, kdf, auth, wrapped, rauth, rwrapped, created, 0, 0 FROM users WHERE id = ?").bind(next, uid),
-        env.DB.prepare("UPDATE vaults SET uid = ? WHERE uid = ?").bind(next, uid),
-        env.DB.prepare("UPDATE sessions SET uid = ? WHERE uid = ?").bind(next, uid),
-        env.DB.prepare("DELETE FROM users WHERE id = ?").bind(uid),
-      ]);
-    } catch {
-      // Someone took the name a moment ago (the insert hit the existing row): nothing changed.
-      throw new ApiError(409, "taken", "That username is taken. Try another.");
-    }
+    await useChallenge(env, body.challenge, "create", uid, now);
+    const pwrapped = wrappedField(body.pwrapped, "pwrapped");
+    const { cid, alg, pub } = await verifyAttestation(request, body);
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys WHERE uid = ?").bind(uid).first();
+    if ((n?.n || 0) >= 10) throw new ApiError(400, "too_many", "That's ten passkeys already. Turn Face ID off and on again to start fresh.");
+    await env.DB.prepare("INSERT INTO passkeys (cid, uid, alg, pub, pwrapped, created) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (cid) DO UPDATE SET pwrapped = excluded.pwrapped WHERE passkeys.uid = excluded.uid")
+      .bind(cid, uid, alg, pub, pwrapped, now)
+      .run();
+    return [200, { ok: true }];
+  }
+
+  if (name === "passkey/remove") {
+    await limits(env, "pkRemove", request, { user: uid }, now);
+    await env.DB.prepare("DELETE FROM passkeys WHERE uid = ?").bind(uid).run();
     return [200, { ok: true }];
   }
 
@@ -636,6 +999,8 @@ async function accountRoute(name, request, env, ctx) {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM vaults WHERE uid = ?").bind(uid),
       env.DB.prepare("DELETE FROM sessions WHERE uid = ?").bind(uid),
+      env.DB.prepare("DELETE FROM names WHERE uid = ?").bind(uid),
+      env.DB.prepare("DELETE FROM passkeys WHERE uid = ?").bind(uid),
       env.DB.prepare("DELETE FROM users WHERE id = ?").bind(uid),
     ]);
     return [200, { ok: true }];

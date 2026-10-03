@@ -5,6 +5,8 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import worker, { cleanLogin } from "../worker/worker.js";
 import { FakeD1 } from "./helpers/d1.mjs";
+import { fakeAuthenticator } from "./helpers/webauthn.mjs";
+import { prfKey } from "../js/passkey.js";
 import * as A from "../js/account.js";
 
 const ORIGIN = "https://parth8.github.io";
@@ -85,7 +87,7 @@ test("sign up, log in elsewhere, and both devices open the same shelves", async 
 test("the server never holds a password, a login, a readable shelf or a raw token", async () => {
   const a = await signup("ada@example.com");
   await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...(await A.seal(a.dataKey, { title: "Secret Garden" })), base: 0 }) });
-  const dump = JSON.stringify([env.DB.rows("SELECT * FROM users"), env.DB.rows("SELECT * FROM sessions"), env.DB.rows("SELECT * FROM vaults"), env.DB.rows("SELECT * FROM hits")]);
+  const dump = JSON.stringify([env.DB.rows("SELECT * FROM users"), env.DB.rows("SELECT * FROM names"), env.DB.rows("SELECT * FROM sessions"), env.DB.rows("SELECT * FROM vaults"), env.DB.rows("SELECT * FROM hits")]);
   for (const leak of ["ada@example.com", "example.com", PW, "Secret Garden", a.token, a.body.auth, SECRET]) assert.ok(!dump.includes(leak), `database contains ${leak}`);
   // Raw IPs aren't stored either.
   assert.ok(!dump.includes(`10.1.0.${ip}`));
@@ -275,21 +277,161 @@ test("databases made before the op column get it added", async () => {
   assert.equal(env.DB.rows("SELECT op FROM vaults")[0].op, "op-cccccccc3");
 });
 
-test("rename: a new username keeps the backup and the session; the old name stops working", async () => {
-  const a = await signup("ada");
+let spread = 0; // (many logins in one test: from different addresses, under the rate limits)
+const L = (name) => login(name, PW, { from: `10.80.${ip}.${spread++ % 250}` });
+async function signup3(username, email, pw = PW, from = `10.81.${ip}.${spread++ % 250}`) {
+  const made = await A.newAccount({ username, email }, pw);
+  const r = await call("/api/auth/signup", { body: made.body, from });
+  return { ...made, status: r.status, body: r.body, token: r.body?.token };
+}
+const proof = async (token, pw = PW) => {
+  const me = await call("/api/auth/me", { token, body: {} });
+  return (await A.fromPassword(pw, me.body.salt, me.body.kdf)).auth;
+};
+
+test("username, email and password are three separate things; log in with either name", async () => {
+  const a = await signup3("ada", "ada@example.com");
+  assert.equal(a.status, 200, JSON.stringify(a.body));
   await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...(await A.seal(a.dataKey, { n: 3 })), base: 0 }) });
-  await signup("bob");
-  const pre = await call("/api/auth/prelogin", { body: { login: "ada" } });
-  const { auth } = await A.fromPassword(PW, pre.body.salt, pre.body.kdf);
-  assert.equal((await call("/api/auth/rename", { token: a.token, body: { auth, login: "bob" } })).status, 409, "taken");
-  const wrong = await A.fromPassword("wrong wrong wrong", pre.body.salt, pre.body.kdf);
-  assert.equal((await call("/api/auth/rename", { token: a.token, body: { auth: wrong.auth, login: "ada.lovelace" } })).status, 401);
-  const r = await call("/api/auth/rename", { token: a.token, body: { auth, login: "Ada.Lovelace" } });
-  assert.equal(r.status, 200);
+  for (const name of ["ada", "ADA@example.com"]) {
+    const r = await L(name);
+    assert.equal(r.status, 200, name);
+    assert.equal(r.body.username, "ada");
+  }
+  const me = await call("/api/auth/me", { token: a.token, body: {} });
+  assert.deepEqual([me.body.username, me.body.email, me.body.passkeys], ["ada", true, 0]);
+  // The email is never stored: only a keyed hash of it.
+  assert.ok(!JSON.stringify([env.DB.rows("SELECT * FROM users"), env.DB.rows("SELECT * FROM names")]).includes("example.com"));
+
+  // A new username: no password needed. The email and password stay; the old username stops.
+  await signup3("bob", "bob@example.com");
+  assert.equal((await call("/api/auth/username", { token: a.token, body: { username: "bob" } })).status, 409, "taken");
+  assert.equal((await call("/api/auth/username", { token: a.token, body: { username: "@Lovelace" } })).status, 200);
+  assert.equal((await L("ada")).status, 401);
+  assert.equal((await L("lovelace")).body.username, "lovelace");
+  assert.equal((await L("ada@example.com")).status, 200, "same email");
   // Same session, same backup.
   assert.deepEqual(await A.open(a.dataKey, (await call("/api/vault", { token: a.token })).body), { n: 3 });
-  assert.equal((await login("ada")).status, 401);
-  const again = await login("ada.lovelace");
-  assert.equal(again.status, 200);
-  assert.equal(env.DB.rows("SELECT * FROM users").length, 2);
+
+  // A new email needs the password; the username stays.
+  const wrong = await proof(a.token, "wrong wrong wrong");
+  assert.equal((await call("/api/auth/email", { token: a.token, body: { auth: wrong, email: "ada@new.example" } })).status, 401);
+  assert.equal((await call("/api/auth/email", { token: a.token, body: { auth: await proof(a.token), email: "bob@example.com" } })).status, 409, "someone else's");
+  assert.equal((await call("/api/auth/email", { token: a.token, body: { auth: await proof(a.token), email: "ada@new.example" } })).status, 200);
+  assert.equal((await L("ada@example.com")).status, 401);
+  assert.equal((await L("ada@new.example")).body.username, "lovelace");
+  assert.equal((await L("lovelace")).status, 200);
+  // Remove the email: the username still logs in.
+  assert.equal((await call("/api/auth/email", { token: a.token, body: { auth: await proof(a.token), email: "" } })).status, 200);
+  assert.equal((await L("ada@new.example")).status, 401);
+  assert.equal((await call("/api/auth/me", { token: a.token, body: {} })).body.email, false);
+  // No email at all is fine too.
+  assert.equal((await signup3("carol", null)).status, 200);
+  assert.equal((await signup3("carol2", "bob@example.com")).status, 409, "email already used");
+});
+
+test("older accounts keep working, and get a separate username and email when they log in", async () => {
+  // Build the old row by hand with the same keyed hashes the Worker uses.
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = async (label, bytes) => Buffer.from(await crypto.subtle.sign("HMAC", key, new Uint8Array([...new TextEncoder().encode(`${label}\0`), ...bytes]))).toString("hex");
+  const old = async (login) => {
+    const made = await A.newAccount(login, PW);
+    const b = made.body;
+    await call("/api/auth/prelogin", { body: { login: "warmup" } }); // (makes the tables)
+    env.DB.db
+      .prepare("INSERT INTO users (id, salt, kdf, auth, wrapped, rauth, rwrapped, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(await mac("id", new TextEncoder().encode(login)), b.salt, b.kdf, await mac("auth", Buffer.from(b.auth, "base64")), b.wrapped, await mac("auth", Buffer.from(b.rauth, "base64")), b.rwrapped, Date.now());
+    return made;
+  };
+  await old("ada");
+  const r = await L("ada");
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.username, "ada", "an old username login becomes the username");
+  // Now an email can be added, and the username changed, independently.
+  assert.equal((await call("/api/auth/email", { token: r.body.token, body: { auth: await proof(r.body.token), email: "ada@example.com" } })).status, 200);
+  assert.equal((await call("/api/auth/username", { token: r.body.token, body: { username: "lovelace" } })).status, 200);
+  assert.equal((await L("ada")).status, 401);
+  assert.equal((await L("lovelace")).status, 200);
+  assert.equal((await L("ada@example.com")).status, 200);
+
+  // An old email login, upgraded from a device that's still logged in (it sends its login).
+  await old("bob@example.com");
+  const b = await L("bob@example.com");
+  const me = await call("/api/auth/me", { token: b.body.token, body: { login: "bob@example.com" } });
+  assert.deepEqual([me.body.username, me.body.email], [null, true]);
+  assert.equal((await call("/api/auth/username", { token: b.body.token, body: { username: "bob" } })).status, 200);
+  assert.equal((await L("bob")).status, 200);
+  assert.equal((await L("bob@example.com")).status, 200, "the email still works");
+  // An old login nobody else can take.
+  assert.equal((await signup3("someone", "bob@example.com")).status, 409);
+});
+
+const RP = new URL(ORIGIN).hostname;
+
+test("Face ID: switched on with the password, then one glance logs in and opens the books", async () => {
+  const a = await signup3("ada", "ada@example.com");
+  await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...(await A.seal(a.dataKey, { secret: "Dune" })), base: 0 }) });
+  const face = await fakeAuthenticator({ rpId: RP, origin: ORIGIN });
+  // The books' key, wrapped with the passkey's own PRF secret (on the device).
+  const raw = await A.unwrap(a.wrapped, (await A.fromPassword(PW, a.body.salt ?? (await call("/api/auth/me", { token: a.token, body: {} })).body.salt)).encKey, true);
+  const pwrapped = await A.wrap(raw, await prfKey(face.prf));
+
+  const ch = await call("/api/auth/passkey/challenge", { token: a.token, body: { for: "create" } });
+  assert.equal(ch.status, 200);
+  assert.equal(ch.body.rpId, RP);
+  const att = await face.create(ch.body.challenge);
+  // Without the password: no.
+  const noPw = await call("/api/auth/passkey/register", { token: a.token, body: { auth: await proof(a.token, "wrong wrong wrong"), challenge: ch.body.challenge, ...att, pwrapped } });
+  assert.equal(noPw.status, 401);
+  const ch2 = await call("/api/auth/passkey/challenge", { token: a.token, body: { for: "create" } });
+  const reg = await call("/api/auth/passkey/register", { token: a.token, body: { auth: await proof(a.token), challenge: ch2.body.challenge, ...(await face.create(ch2.body.challenge)), pwrapped } });
+  assert.equal(reg.status, 200, JSON.stringify(reg.body));
+  assert.equal((await call("/api/auth/me", { token: a.token, body: {} })).body.passkeys, 1);
+  // The challenge only works once.
+  assert.equal((await call("/api/auth/passkey/register", { token: a.token, body: { auth: await proof(a.token), challenge: ch2.body.challenge, ...(await face.create(ch2.body.challenge)), pwrapped } })).status, 401);
+
+  // Log in on a "new device": no password, no username.
+  const g = await call("/api/auth/passkey/challenge", { body: { for: "get" } });
+  const r = await call("/api/auth/passkey/login", { body: { challenge: g.body.challenge, ...(await face.get(g.body.challenge)) } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.username, "ada");
+  const key = await A.unwrap(r.body.pwrapped, await prfKey(face.prf));
+  assert.deepEqual(await A.open(key, (await call("/api/vault", { token: r.body.token })).body), { secret: "Dune" });
+  // The server never had anything that opens the books: the PRF secret stays on the device.
+  assert.ok(!JSON.stringify(env.DB.rows("SELECT * FROM passkeys")).includes(Buffer.from(face.prf).toString("base64")));
+});
+
+test("Face ID: replays, other sites, no Face ID, forged signatures and removed passkeys are refused", async () => {
+  const a = await signup3("ada", null);
+  const face = await fakeAuthenticator({ rpId: RP, origin: ORIGIN });
+  const ch = await call("/api/auth/passkey/challenge", { token: a.token, body: { for: "create" } });
+  const pwrapped = await A.wrap(await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]), await prfKey(face.prf));
+  assert.equal((await call("/api/auth/passkey/register", { token: a.token, body: { auth: await proof(a.token), challenge: ch.body.challenge, ...(await face.create(ch.body.challenge)), pwrapped } })).status, 200);
+  const attempt = async (opts = {}, patch = {}) => {
+    const g = await call("/api/auth/passkey/challenge", { body: { for: "get" }, from: "10.70.0.1" });
+    return call("/api/auth/passkey/login", { body: { challenge: g.body.challenge, ...(await face.get(g.body.challenge, opts)), ...patch }, from: "10.70.0.2" });
+  };
+  assert.equal((await attempt()).status, 200);
+  assert.equal((await attempt({ origin: "https://evil.example" })).status, 401, "another site");
+  assert.equal((await attempt({ flags: 0x01 })).status, 401, "no Face ID (user not verified)");
+  assert.equal((await attempt({ tamper: true })).status, 401, "forged signature");
+  assert.equal((await attempt({ type: "webauthn.create" })).status, 401, "wrong ceremony");
+  // A replayed answer (same challenge twice).
+  const g = await call("/api/auth/passkey/challenge", { body: { for: "get" } });
+  const ans = await face.get(g.body.challenge);
+  assert.equal((await call("/api/auth/passkey/login", { body: { challenge: g.body.challenge, ...ans } })).status, 200);
+  assert.equal((await call("/api/auth/passkey/login", { body: { challenge: g.body.challenge, ...ans } })).status, 401, "replay");
+  // Someone else's passkey for another site's id can't register here either.
+  const evil = await fakeAuthenticator({ rpId: "evil.example", origin: ORIGIN });
+  const ch3 = await call("/api/auth/passkey/challenge", { token: a.token, body: { for: "create" } });
+  assert.equal((await call("/api/auth/passkey/register", { token: a.token, body: { auth: await proof(a.token), challenge: ch3.body.challenge, ...(await evil.create(ch3.body.challenge)), pwrapped } })).status, 401);
+  // A create challenge needs a session.
+  assert.equal((await call("/api/auth/passkey/challenge", { body: { for: "create" } })).status, 401);
+  // Face ID off: the passkey stops working.
+  assert.equal((await call("/api/auth/passkey/remove", { token: a.token, body: {} })).status, 200);
+  assert.equal((await attempt()).status, 401);
+  // And deleting the account takes passkeys and names with it.
+  await call("/api/auth/delete", { token: a.token, body: { auth: await proof(a.token) } });
+  assert.equal(env.DB.rows("SELECT * FROM names").length, 0);
+  assert.equal(env.DB.rows("SELECT * FROM passkeys").length, 0);
 });

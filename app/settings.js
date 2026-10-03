@@ -97,7 +97,7 @@ export function renderMe() {
         "div",
         { class: "me-id-links" },
         h("button", { type: "button", class: "link-btn", text: state.name ? "CHANGE NAME" : "ADD YOUR NAME", on: { click: () => askName({ edit: true }).then(refreshMe) } }),
-        account?.on ? h("button", { type: "button", class: "link-btn", text: "CHANGE USERNAME", on: { click: () => renameFlow() } }) : null,
+        account?.on ? h("button", { type: "button", class: "link-btn", text: account.username ? "CHANGE USERNAME" : "PICK A USERNAME", on: { click: () => renameFlow() } }) : null,
       ),
     ),
 
@@ -167,7 +167,7 @@ function faceOf() {
 
 /** "@username" when you're logged in. */
 export function handleText() {
-  return account?.on ? `@${account.user}` : "NOT LOGGED IN";
+  return account?.on ? (account.username ? `@${account.username}` : account.user) : "NOT LOGGED IN";
 }
 
 /**
@@ -238,21 +238,20 @@ export async function renameFlow() {
   const res = await popup({
     tone: "cyan",
     icon: "🏷️",
-    title: "NEW USERNAME",
-    text: `You log in as @${account.user}. Pick a new username (or use an email). Your books, backup and password stay the same.`,
-    fields: [
-      { name: "login", placeholder: "New username or email", autocomplete: "username", label: "New username or email", max: 254, inputmode: "email" },
-      { name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "done" },
-    ],
+    title: account.username ? "NEW USERNAME" : "PICK A USERNAME",
+    text: account.username
+      ? `You're @${account.username}. Pick a new one: your email, password, books and backup stay exactly as they are.`
+      : "Pick a username: it's how you're shown, and another way to log in. Your email, password and books stay as they are.",
+    fields: [{ name: "username", value: account.username || "", placeholder: "New username", autocomplete: "username", label: "New username", max: 33, capitalize: "none", enter: "done" }],
     actions: [
       { id: "cancel", label: "CANCEL", cancel: true },
-      { id: "go", label: "CHANGE IT", primary: true, busy: "CHANGING…" },
+      { id: "go", label: "SAVE", primary: true, busy: "SAVING…" },
     ],
-    submit: (v) => account.rename(v.login, v.password),
+    submit: (v) => account.setUsername(v.username),
   });
   if (res.id !== "go") return;
   feel("levelup", "success");
-  island.say({ icon: "🏷️", title: `YOU'RE @${account.user.toUpperCase().slice(0, 16)}`, sub: "Log in with this from now on", tone: "lime" });
+  island.say({ icon: "🏷️", title: `YOU'RE @${account.username.toUpperCase().slice(0, 16)}`, sub: "Your email and password haven't changed", tone: "lime" });
   refreshMe();
 }
 export function renderFace() {

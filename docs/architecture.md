@@ -69,7 +69,8 @@ tools/              App icons from one SVG mark
 | `search.js` | Search through the Worker, Open Library if it can't be reached |
 | `covers.js` | Sharp covers: sizes for Google covers, HD lookups by ISBN or title |
 | `sync.js` | End-to-end encrypted sync codes: key derivation, AES-GCM, merge rounds |
-| `account.js` | Accounts: key derivation, wrapped keys, encrypted backups, sessions |
+| `account.js` | Accounts: username, email and password; key derivation, wrapped keys, encrypted backups, sessions |
+| `passkey.js` | Face ID / Touch ID login with passkeys (WebAuthn, with PRF to unlock the encrypted books) |
 | `goodreads.js` | Reads a Goodreads export (CSV) into books |
 | `eggs.js` | Easter eggs |
 | `critters.js` | The animals that wander by |

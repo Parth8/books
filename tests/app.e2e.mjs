@@ -49,12 +49,14 @@ function fakeSync(store) {
 function realWorker(accountsEnv) {
   return async (r) => {
     const req = r.request();
-    const headers = { ...req.headers(), "cf-connecting-ip": "10.0.0.1" };
+    // (each test's world has its own address, so rate limits don't carry over between tests)
+    const headers = { ...req.headers(), "cf-connecting-ip": accountsEnv.ip || "10.0.0.1" };
     const res = await worker.fetch(new Request(req.url(), { method: req.method(), headers, body: ["GET", "HEAD"].includes(req.method()) ? undefined : req.postData() }), accountsEnv, { waitUntil: () => {} });
     return r.fulfill({ status: res.status, headers: Object.fromEntries(res.headers), body: await res.text() });
   };
 }
-const accountsEnv = (on) => ({ ALLOWED_ORIGINS: new URL(SITE).origin, ...(on ? { DB: new FakeD1(), AUTH_SECRET: "e2e-auth-secret-NOT-REAL-0123456789abcdef" } : {}) });
+let worlds = 0;
+const accountsEnv = (on) => ({ ip: `10.0.${++worlds}.1`, ALLOWED_ORIGINS: new URL(SITE).origin, ...(on ? { DB: new FakeD1(), AUTH_SECRET: "e2e-auth-secret-NOT-REAL-0123456789abcdef" } : {}) });
 
 const TIPS = ["stamp", "addstamp", "pad", "padwant", "padread", "tape", "lcd", "pull"];
 
@@ -694,7 +696,8 @@ await run("accounts: sign up, save the recovery code, log in on another device, 
     await a.page.waitForSelector("#account-tile");
     assert.equal(await a.page.locator("#sync-tile").count(), 0, "with accounts on, the sync code steps aside");
     await a.page.click('#account-tile .key[aria-label="Create an account"]');
-    await a.page.fill('.pop input[name="login"]', "Ada.Reads");
+    await a.page.fill('.pop input[name="username"]', "Ada.Reads");
+    await a.page.fill('.pop input[name="email"]', "ada@example.com");
     await a.page.fill('.pop input[name="password"]', "short");
     await a.page.fill('.pop input[name="again"]', "short");
     await a.page.click('.pop-btn[data-id="go"]');
@@ -713,15 +716,16 @@ await run("accounts: sign up, save the recovery code, log in on another device, 
     await a.page.click('.pop-btn[data-id="ok"]');
     await a.page.waitForSelector(".pop", { state: "detached" });
     await a.page.waitForFunction(() => /BACKED UP/.test(document.querySelector("#account-tile")?.textContent || ""));
-    assert.match(await a.page.textContent("#account-tile"), /ada\.reads/);
-    // Nothing readable reached the server.
-    const dump = JSON.stringify([env.DB.rows("SELECT * FROM users"), env.DB.rows("SELECT * FROM vaults")]);
-    for (const leak of ["ada.reads", "tea and long books", "Dune", "Hitchhiker", code]) assert.ok(!dump.includes(leak), `server has ${leak}`);
+    assert.match(await a.page.textContent("#account-tile"), /@ada\.reads/);
+    assert.match(await a.page.textContent("#account-tile"), /ada@example\.com/);
+    // Nothing readable reached the server (the username is public; the email is only hashed).
+    const dump = JSON.stringify([env.DB.rows("SELECT * FROM users"), env.DB.rows("SELECT * FROM names"), env.DB.rows("SELECT * FROM vaults")]);
+    for (const leak of ["ada@example.com", "example.com", "tea and long books", "Dune", "Hitchhiker", code]) assert.ok(!dump.includes(leak), `server has ${leak}`);
 
     // Another device: a wrong password stays in the pop-up with a message; the right one brings the books.
     await b.page.click("#me");
     await b.page.click('#account-tile .key[aria-label="Log in"]');
-    await b.page.fill('.pop input[name="login"]', "ada.reads");
+    await b.page.fill('.pop input[name="login"]', "ADA@example.com"); // the email works as well as the username
     await b.page.fill('.pop input[name="password"]', "tea and short books");
     await b.page.click('.pop-btn[data-id="go"]');
     await b.page.waitForSelector(".pop-error:not(:empty)", { timeout: 20000 });
@@ -754,7 +758,8 @@ await run("accounts: forgot password with the recovery code, then log out and cl
     await starter(a.page);
     await a.page.click("#me");
     await a.page.click('#account-tile .key[aria-label="Create an account"]');
-    await a.page.fill('.pop input[name="login"]', "grace@example.com");
+    await a.page.fill('.pop input[name="username"]', "grace");
+    await a.page.fill('.pop input[name="email"]', "grace@example.com");
     await a.page.fill('.pop input[name="password"]', "compilers are fun");
     await a.page.fill('.pop input[name="again"]', "compilers are fun");
     await a.page.click('.pop-btn[data-id="go"]');
@@ -789,6 +794,75 @@ await run("accounts: forgot password with the recovery code, then log out and cl
     await a.page.fill('.pop input[name="again"]', "a new secret phrase");
     await a.page.click('.pop-btn[data-id="go"]');
     await a.page.waitForFunction(() => globalThis.__shelfie.state.books.length === 8, null, { timeout: 20000 });
+    assert.deepEqual(a.errors, []);
+  } finally {
+    await a.ctx.close();
+  }
+}, { raw: true });
+
+await run("accounts: username and email change separately; Face ID logs in with one glance", async () => {
+  const env = accountsEnv(true);
+  const a = await device(env);
+  // (which wait timed out, if one does)
+  const step = (n, p) => p.catch((e) => Promise.reject(new Error(`step ${n}: ${e.message}`)));
+  // A pretend Face ID (Chromium's virtual authenticator, with PRF).
+  const cdp = await a.ctx.newCDPSession(a.page);
+  await cdp.send("WebAuthn.enable");
+  await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, hasPrf: true, automaticPresenceSimulation: true } });
+  try {
+    await a.page.reload(); // (so the page sees Face ID is there)
+    await step(1, a.page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1));
+    await starter(a.page);
+    await a.page.click("#me");
+    await a.page.click('#account-tile .key[aria-label="Create an account"]');
+    await a.page.fill('.pop input[name="username"]', "kat");
+    await a.page.fill('.pop input[name="password"]', "pages before bed");
+    await a.page.fill('.pop input[name="again"]', "pages before bed");
+    await a.page.click('.pop-btn[data-id="go"]');
+    await step(2, a.page.waitForSelector(".recovery-code", { timeout: 45000 }));
+    const code = (await a.page.textContent(".recovery-code")).trim();
+    await a.page.fill(".pop-input", code.slice(-4));
+    await a.page.click('.pop-btn[data-id="ok"]');
+    // Right after the first login: the offer to turn on Face ID. One tap, one glance.
+    await step(3, a.page.waitForSelector('.pop-btn[data-id="go"]:has-text("TURN ON")', { timeout: 20000 }));
+    await a.page.click('.pop-btn[data-id="go"]');
+    await step(4, a.page.waitForSelector(".pop", { state: "detached", timeout: 20000 }));
+    await step(5, a.page.waitForFunction(() => /ON · TURN OFF/.test(document.querySelector("#account-tile")?.textContent || ""), null, { timeout: 20000 }));
+    assert.equal(env.DB.rows("SELECT * FROM passkeys").length, 1);
+
+    // A new username: no password; the email gets added with the password.
+    await a.page.click('#account-tile .link-btn:has-text("CHANGE USERNAME")');
+    await a.page.fill('.pop input[name="username"]', "@Kat.Reads");
+    await a.page.click('.pop-btn[data-id="go"]');
+    await step(6, a.page.waitForFunction(() => /@kat\.reads/.test(document.querySelector("#account-tile")?.textContent || "")));
+    await a.page.click('#account-tile .link-btn:has-text("ADD EMAIL")');
+    await a.page.fill('.pop input[name="email"]', "kat@example.com");
+    await a.page.fill('.pop input[name="password"]', "pages before bed");
+    await a.page.click('.pop-btn[data-id="go"]');
+    await step(7, a.page.waitForFunction(() => /kat@example\.com/.test(document.querySelector("#account-tile")?.textContent || ""), null, { timeout: 20000 }));
+
+    // Log out and clear the device: then Face ID alone brings everything back.
+    await a.page.click('#account-tile .key[aria-label="Log out"]');
+    await a.page.click('.pop-btn[data-id="clear"]');
+    await a.page.waitForEvent("load");
+    await step(8, a.page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1));
+    assert.equal(await a.page.evaluate(() => globalThis.__shelfie.state.books.length), 0);
+    // The fresh start greets you (a hello, your name, keeping books safe): say "later" to all of it.
+    for (let quiet = 0; quiet < 4; ) {
+      await a.page.waitForTimeout(400);
+      const closed = await a.page.evaluate(() => {
+        const b = document.querySelector(".pop .pop-btn[data-id='skip'], .pop .pop-btn[data-id='later'], .pop .pop-btn[data-id='cancel']");
+        b?.click();
+        return !!b;
+      });
+      quiet = closed ? 0 : quiet + 1;
+    }
+    await a.page.click("#me");
+    await step(9, a.page.waitForSelector('#account-tile .key[aria-label^="Log in with"]'));
+    await a.page.waitForTimeout(500); // (the challenge is fetched ahead of the tap)
+    await a.page.click('#account-tile .key[aria-label^="Log in with"]');
+    await step(10, a.page.waitForFunction(() => globalThis.__shelfie.state.books.length === 8, null, { timeout: 20000 }));
+    assert.match(await a.page.textContent("#account-tile"), /@kat\.reads/);
     assert.deepEqual(a.errors, []);
   } finally {
     await a.ctx.close();

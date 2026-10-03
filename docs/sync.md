@@ -4,7 +4,16 @@ Keeping your books safe across devices: accounts (end-to-end encrypted) and the 
 
 ## Accounts
 
-Log in with a **username (or email) and a password**, and your shelves follow you to any device: phone, laptop, the home-screen app. You → **Sign up** (or straight from onboarding). There are no social features: an account is just your private, encrypted backup.
+An account has **three separate things: a username, an optional email, and a password.** Log in with the username *or* the email, or with **Face ID** once it's on. Your shelves follow you to any device: phone, laptop, the home-screen app. You → **Sign up** (or straight from onboarding). There are no social features: an account is just your private, encrypted backup.
+
+| | What it is | Change it |
+|---|---|---|
+| **Username** | How you're shown (@username), and a way to log in | You → **Change username**. No password needed. Your email, password and books stay; the old username stops working |
+| **Email** | Optional: another way to log in. Nobody is ever emailed | You → Account → **Add email / Change email** (needs your password). **Remove** it if you have a username |
+| **Password** | Unlocks your books (they're encrypted with a key from it) | You → Account → **Password**. Other devices are logged out |
+| **Face ID** | One glance instead of the password (a passkey, see below) | You → Account → **Turn on Face ID** (needs your password once) |
+
+Accounts made before these were separate keep working as they are. The first time a device logs in (or opens the app while logged in), the old login becomes the username or the email, and from then on each can be changed on its own.
 
 It's built like a password manager, so a breach of the server gives an attacker nothing readable:
 
@@ -12,10 +21,14 @@ It's built like a password manager, so a breach of the server gives an attacker 
   - One half is the proof of the password, sent to the server. The server stores it only as a keyed hash (HMAC with a server secret). Guessing a password from a stolen database would need that secret, plus 600,000 rounds per guess.
   - The other half never leaves the device. It unlocks the random key that encrypts your shelves.
 - **The server can't read your books.** The shelves are compressed, then encrypted on your phone (AES-256-GCM). The key that encrypts them is stored on the server only in encrypted form. On your device it's a non-extractable key: page code can use it but can't read it out.
-- **No personal data stored.** Your username or email is stored only as a keyed hash, never as text, and nobody is ever emailed. Rate-limit counters use hashes, not IP addresses.
+- **No personal data stored.** Your email is stored only as a keyed hash, never as text, and nobody is ever emailed. Your username is stored as text, because it's public anyway (it's what you're shown as). Rate-limit counters use hashes, not IP addresses.
 - **Sessions.** Each login gets a random token. The server keeps only its SHA-256, and it expires after 30 days unused. Logging out ends it; **log out everywhere** ends them all. Changing your password signs out your other devices.
 - **Forgot your password?** When you sign up you get a one-time **recovery code**: copy it, or save it as a file. To make sure you've seen it, you type its last four characters while it's still on screen, so there's nothing to memorise. The code sets a new password and keeps your books. We can't reset a password for you, because we can't read your account; that's the point.
-- **Change your username.** You → **Change username** (needs your password). Your books, backup, password and this session stay the same; the old username stops working, and a name that's taken is refused.
+- **Face ID (passkeys).** Apple never shares anything about your face with an app or a website, so there's no "face hash" to use. Instead, Face ID unlocks a **passkey**: a key pair made in the phone's secure hardware. The server only keeps the public half, so there's nothing on it that can log in. Passkeys sync through your own iCloud Keychain, so Face ID works on your other Apple devices too.
+  - **Your books stay end-to-end encrypted.** A login alone can't open them, since they're locked with a key from your password. Each passkey can also produce a secret of its own, only after Face ID (the WebAuthn PRF extension). That secret wraps a second copy of your books' key. The server stores that wrapped copy but never the secret, so it still can't open anything.
+  - **Turning it on needs your password once.** That proves it's you, so a stolen session can't add its own passkey, and it unlocks the key that Face ID will look after. Shelfie offers it once, right after your first password login on a device that supports it.
+  - **What's checked on every Face ID login.** The challenge is single-use and expires in five minutes. The answer must be for this site, made with Face ID (not just a tap), and carry a valid signature from a passkey linked to an account.
+  - **Needs** iOS 18 / macOS 15 Safari, or a recent Chrome or Edge. Elsewhere Face ID isn't offered, and the password works as always. **Turn it off** in You → Account: every passkey stops working.
 - **Lost the recovery code?** While you're logged in on any device, You → Account → **New recovery code** makes a fresh one (it needs your password), and the old one stops working.
 - **Lost both** (no password, no code, no logged-in device)? The backup can't be opened by anyone, including us. The books on your phone stay where they are, and you can start a new account from them.
 - **Rate limits** on every account action. A quick per-location limit sits in front of durable limits stored in the database, which apply across all of Cloudflare:
@@ -25,11 +38,13 @@ It's built like a password manager, so a breach of the server gives an attacker 
   | Logins | 20 per address and 10 per account, every 10 minutes |
   | Sign-ups | 5 per address per hour |
   | Recovery | 10 per address and 5 per account, per hour |
+  | Face ID logins | 20 per address every 10 minutes (and 30 challenges) |
+  | Username / email changes | 10 / 5 per account per hour |
   | Backups | 120 per address per minute (in memory, so backups never write rate-limit rows) |
 
   Wrong passwords lock the account for 1 minute after 5 misses, then 2, 4… up to an hour. Answers carry `Retry-After`.
 - **No user enumeration.** A wrong password and an unknown account get the same answer. Unknown accounts get a made-up salt that never changes.
-- **Delete your account** (it needs your password): the account, its backup and its sessions are removed for good.
+- **Delete your account** (it needs your password): the account, its backup, sessions, usernames, email and passkeys are removed for good.
 
 The phone stays the main copy, so the app is instant and works offline. The account is the backup and the bridge between devices. Your whole library takes a few hundred KB on the phone at most, so moving it off wouldn't free anything noticeable; it would only make the app wait on the network.
 
@@ -66,7 +81,7 @@ A daily reader who opens the app a few times and reads in a few sessions makes a
 4. **Edit code** → paste the new `worker/worker.js` → Deploy. The tables create themselves on first use.
 5. `…/api/health` now shows `"accounts":true`, and the Account section appears in You.
 
-When `worker.js` changes (this round: username changes and cover lookups by title), paste it again and deploy. Tables and new columns are added by themselves.
+When `worker.js` changes (this round: separate username, email and password, and Face ID), paste it again and deploy. Tables and new columns are added by themselves, and existing accounts carry on working.
 
 ## Sync codes, and why data seemed to disappear
 
