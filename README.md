@@ -303,13 +303,14 @@ Switch on You → Settings → **Motion controls** (iPhone asks for permission, 
 
 | Move | What it does |
 |---|---|
-| **Flick** the phone right / left | Next / previous book |
+| **Flick** the phone right / left (turn it to face right or left and back, like a page) | Next / previous book |
 | **Twist** it like a steering wheel | Next / previous shelf |
-| **Flick up** | Add a book |
-| **Tilt** | The pile leans in 3D, the background shifts, the bulbs and fairy lights swing, and a hotspot of light slides across the cover |
+| **Flick up** (tip the top edge towards you and back) | Add a book |
+| **Tilt** | The pile drifts, the background shifts the other way, the bulbs and fairy lights swing, and a hotspot of light slides across the cover |
 
 - **Learning the moves.** A guide with little animated phones shows each move. The first couple of times you use a move, the island says what it did.
-- **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open. There's also a short cooldown after each one, so one flick is one book.
+- **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open. After each move it waits for the phone to settle, so the swing back never counts as a move the other way: one flick is one book.
+- **How moves are read.** From the gyroscope (how fast the phone turns), summed over the last quarter second. A move needs about 28° of turn, clearly about one axis, so a twist is never read as a flick. The pure reader (`gestureReader` in `js/gyro.js`) is unit-tested with recorded-style numbers.
 - **Level is relative.** "Level" is however you're holding the phone, learnt over a couple of seconds.
 - **Privacy.** Nothing about how you move your phone is stored or sent.
 - **Reduce Motion.** With Reduce Motion on, tilt effects are off; the moves still work.

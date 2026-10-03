@@ -28,6 +28,7 @@ import { createCritters, CRITTERS } from "./critters.js";
 import { canInstall, showInstall, shouldOffer, markOffered, chaiCard } from "./home.js";
 import { createLever } from "./lever.js";
 import { edisonString, startStutters } from "./lights.js";
+import { makeGrain } from "./grain.js";
 import { createGyro, motionSupported, askMotion } from "./gyro.js";
 import * as Q from "./quips.js";
 import { fromGoodreads } from "./goodreads.js";
@@ -35,6 +36,7 @@ import { poke } from "./eggs.js";
 import { searchBooks } from "./search.js";
 import { Spring, Velocity, rubber, project } from "./physics.js";
 
+makeGrain();
 let state = S.load(globalThis.localStorage);
 const island = createIsland();
 /** Note that a tip or hint was seen: in your data, so every device and browser knows. */
@@ -469,8 +471,20 @@ const deck = createDeck(deckEl, {
 });
 let pullStep = 0;
 
-function flip(el) {
-  el.classList.toggle("flipped");
+/**
+ * Turn a pass over. Its back (and the 3D set-up a flip needs) only exists while it's turned or
+ * turning: a back face on every card in the pile was GPU memory for nothing.
+ */
+function flip(el, to = !el.classList.contains("flipped")) {
+  clearTimeout(el._backTimer);
+  if (to) {
+    el.classList.add("has-back");
+    void el.offsetWidth; // let the back exist before it turns
+    el.classList.add("flipped");
+  } else if (el.classList.contains("flipped")) {
+    el.classList.remove("flipped");
+    el._backTimer = setTimeout(() => el.classList.remove("has-back"), 850);
+  }
   feel("flip", "light");
 }
 
@@ -480,7 +494,7 @@ let liquidEl = null;
 
 let aliveTimer = 0;
 function onTop(id) {
-  if (topId !== id) deckEl.querySelectorAll(".stamp.flipped").forEach((s) => s.classList.remove("flipped"));
+  if (topId !== id) deckEl.querySelectorAll(".stamp.flipped").forEach((s) => flip(s, false));
   topId = id;
   // The cover art's own shapes dance for a while when a stamp lands on top (SVG animations
   // are drawn by the CPU, so they rest after that; the cover keeps drifting on the GPU).
@@ -601,7 +615,7 @@ function showPageLabel(p, b) {
   const lbl = deck.top?.el.querySelector(".pg");
   if (!lbl) return;
   lbl.textContent = `P.${p}`;
-  lbl.style.setProperty("--lvl", String(p / b.pages));
+  lbl.parentElement.style.setProperty("--lvl", String(p / b.pages)); // (on the lid: the page label and the ripple both ride the level)
 }
 
 function saveSoon(ms) {
@@ -1818,7 +1832,7 @@ function switchRow(icon, title, text, pref) {
 /** Motion controls: switching on asks permission (in the tap), and shows the moves. */
 function motionRow() {
   const sw = h("span", { class: `switch${fx.motion ? " on" : ""}`, "aria-hidden": "true" }, h("i"));
-  const b = h("button", { type: "button", class: "me-row", role: "switch", "aria-checked": String(fx.motion), "aria-label": "MOTION CONTROLS" }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: "📳" }), h("span", { class: "me-row-text" }, h("b", { text: "MOTION CONTROLS" }), h("small", { text: "Flick for the next book, twist for the next shelf, flick up to add. Tilt to play with the light." })), sw);
+  const b = h("button", { type: "button", class: "me-row", role: "switch", "aria-checked": String(fx.motion), "aria-label": "MOTION CONTROLS" }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: "📳" }), h("span", { class: "me-row-text" }, h("b", { text: "MOTION CONTROLS" }), h("small", { text: "Turn the phone sideways and back for the next book, twist for the next shelf, tip the top towards you to add. Tilt to play with the light." })), sw);
   b.addEventListener("click", () => {
     if (fx.motion) {
       fx.set("motion", false);
@@ -2604,23 +2618,27 @@ prerenderStats();
 
 /* ---------------- motion controls ---------------- */
 
-let cardWidth = 0;
 const stageBg = $(".stage-bg");
-/** The tilt of the phone, -1..1 each way: the pile leans, the room shifts, the bulbs swing. */
+/**
+ * The tilt of the phone, -1..1 each way: the pile drifts, the room shifts the other way, the bulbs
+ * swing and the light on the cover slides. All of it is 2D transforms on elements that already have
+ * their own layer, so the GPU just moves pictures about; nothing is re-laid out or repainted.
+ */
+let swung = 0;
 function applyTilt(x, y) {
-  const mag = Math.hypot(x, y);
-  // The pile turns about an axis at right angles to the tilt (individual property: it adds to
-  // the pile's own transform rather than replacing it).
-  deckEl.style.rotate = mag > 0.01 ? `${(-y).toFixed(3)} ${x.toFixed(3)} 0 ${(mag * 9).toFixed(2)}deg` : "";
+  deckEl.style.translate = `${(x * 10).toFixed(1)}px ${(y * 6).toFixed(1)}px`;
+  deckEl.style.rotate = `${(x * 1.5).toFixed(2)}deg`;
   stageBg.style.translate = `${(-x * 16).toFixed(1)}px ${(-y * 10).toFixed(1)}px`;
   fairy.style.rotate = `${(x * 2.5).toFixed(2)}deg`;
-  for (const e of document.querySelectorAll(".edison")) e.style.setProperty("--swing", `${(-x * 12).toFixed(1)}deg`);
-  const top = deck.top?.el;
-  if (top) {
-    top.style.setProperty("--tx", x.toFixed(3));
-    top.style.setProperty("--ty", y.toFixed(3));
+  // The bulbs swing in steps (their own transition smooths it): restyling every bulb every frame
+  // was one of the costs of tilting.
+  const sw = Math.round(-x * 6) * 2;
+  if (sw !== swung) {
+    swung = sw;
+    for (const e of document.querySelectorAll(".edison")) e.style.setProperty("--swing", `${sw}deg`);
   }
-  void cardWidth;
+  const spot = deck.top?.el.querySelector(".hotspot");
+  if (spot) spot.style.transform = `translate(${(x * 45).toFixed(1)}%, ${(y * 40).toFixed(1)}%)`;
 }
 
 const motionUsed = new Set();
@@ -2679,9 +2697,9 @@ function motionGuide() {
   return h(
     "div",
     { class: "mo-guide" },
-    move("flick", "FLICK SIDEWAYS", "A quick flick right: next book. Left: back one."),
+    move("flick", "FLICK SIDEWAYS", "Turn the phone quickly to face right and back, like turning a page: next book. Left: back one."),
     move("twist", "TWIST", "Turn it like a steering wheel: the next shelf (or the one before)."),
-    move("lift", "FLICK UP", "A quick lift: add a book."),
+    move("lift", "FLICK UP", "Tip the top edge quickly towards you and back: add a book."),
     move("tilt", "TILT", "Just tilt: the pile leans, the lights swing, the cover catches the light."),
   );
 }
@@ -2702,7 +2720,7 @@ async function motionInvite({ fromSettings = false } = {}) {
     ],
     submit: () => enableMotion(),
   });
-  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, twist, lift, tilt", tone: "lime" });
+  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, twist, tip, tilt", tone: "lime" });
   refreshMe();
 }
 

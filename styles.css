@@ -79,7 +79,7 @@ html {
 }
 body {
   margin: 0;
-  background: var(--night) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background: var(--night) var(--grain, none);
   color: var(--white);
   font: 400 15px/1.4 var(--mono);
   overflow: hidden;
@@ -206,9 +206,20 @@ p {
   overflow: hidden;
   touch-action: pan-y;
   cursor: grab;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
 }
+/* The ends fade out with overlays on top (a mask over a strip you drag is re-masked every frame) */
+.tape::before,
+.tape::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18%;
+  z-index: 2;
+  pointer-events: none;
+}
+.tape::before { left: 0; background: linear-gradient(90deg, var(--night), transparent); }
+.tape::after { right: 0; background: linear-gradient(-90deg, var(--night), transparent); }
 .tape-track {
   position: absolute;
   top: 0;
@@ -252,7 +263,6 @@ p {
   position: relative;
   /* The pile sizes itself to this box (container units), whatever the window. */
   container-type: size;
-  perspective: 1100px; /* so the pile can lean in 3D as you tilt the phone */
   margin: 8px 12px 0;
   border-radius: 34px;
   background: var(--stage);
@@ -260,7 +270,6 @@ p {
   overflow: hidden;
   isolation: isolate;
   min-height: 0;
-  transition: filter 0.3s;
 }
 .stage::after {
   /* grainy light, like a printed poster */
@@ -289,16 +298,14 @@ p {
   word-spacing: 30px;
   text-align: center;
   width: 160%;
-  /* Its own GPU layer: the drift is composited, never repainted. */
-  will-change: transform;
-  animation: marquee 40s linear infinite;
+  /* Still. (A drifting outline twice the screen wide was the single most expensive thing
+     on screen in Safari.) It shifts with the tilt of the phone instead, when motion is on. */
 }
 @keyframes marquee {
   to { transform: translateX(-25%); }
 }
-body.lifting .stage {
-  filter: saturate(1.2);
-}
+/* (No filter on the stage while you lift a book: Safari would re-filter the whole stage
+   on every frame of the drag.) */
 
 .deck {
   position: absolute;
@@ -331,7 +338,9 @@ body.lifting .stage {
   inset: 0;
   pointer-events: none;
   z-index: 1;
+  display: none; /* only while you hold a book */
 }
+body.lifting .zones { display: block; }
 .zone {
   position: absolute;
   display: flex;
@@ -493,9 +502,9 @@ body.lifting .stage {
 .stamp-shadow {
   position: absolute;
   inset: 8% 6% -2%;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.42);
-  filter: blur(14px);
+  border-radius: 30%;
+  /* a soft shadow drawn as a gradient (a live blur filter re-renders as cards move) */
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.25) 60%, transparent);
   transform: translateY(10px);
   transition: transform 0.4s var(--ease), opacity 0.4s;
   pointer-events: none;
@@ -728,7 +737,6 @@ body.lifting .stage {
   align-items: center;
   transform: rotate(-16deg);
   pointer-events: none;
-  mix-blend-mode: multiply;
   color: #c4122f;
   z-index: 4;
 }
@@ -1212,7 +1220,7 @@ body.lifting .stage {
   background: rgba(5, 5, 5, 0.78);
   opacity: 0;
   pointer-events: none;
-  will-change: opacity;
+  display: none;
 }
 /* No live blur behind panels: blurring a screen full of moving things every frame is what made
    pulling Stats up stutter. A deep dim reads just as well. */
@@ -1476,7 +1484,6 @@ body.lifting .stage {
   gap: 10px;
 }
 .mini {
-  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.35));
 }
 .mini-paper {
   --hole: 3.5px;
@@ -1889,7 +1896,7 @@ body.lifting .stage {
   inset: 0;
   opacity: 0.12;
   pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-image: var(--grain, none);
 }
 .poster {
   color: var(--ink);
@@ -2147,7 +2154,6 @@ body.party .stage {
   grid-template-columns: repeat(3, 1fr);
 }
 .key.toggle:not(.on) .cap {
-  filter: grayscale(1);
   opacity: 0.55;
 }
 .key.toggle.on .cap {
@@ -2200,7 +2206,7 @@ body.party .stage {
   inset: 0;
   opacity: 0.12;
   pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-image: var(--grain, none);
 }
 .tour > * {
   position: relative;
@@ -2833,7 +2839,6 @@ body.party .stage {
   font-size: 46px;
   line-height: 1;
   transform: scaleX(var(--flip, 1));
-  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.25));
   animation: waddle 0.42s ease-in-out infinite alternate;
 }
 .critter.snail .critter-body,
@@ -2891,7 +2896,6 @@ body.party .stage {
 }
 .mini.got .mini-e {
   font-size: 34px;
-  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.2));
 }
 .badges {
   gap: 16px 12px;
@@ -3856,9 +3860,7 @@ body.party .stage {
   border-radius: 50% 50% 45% 45%;
   background: var(--c);
   box-shadow: 0 0 8px 2px var(--c);
-  opacity: 0.35;
-  animation: twinkle var(--d) ease-in-out var(--delay) infinite alternate;
-  will-change: opacity;
+  opacity: 0.9;
 }
 .fairy i::before {
   content: "";
@@ -3960,8 +3962,8 @@ body.party .stage {
   height: 70%;
   border-radius: 50%;
   background: radial-gradient(closest-side, rgba(255, 255, 255, 0.32), transparent);
-  /* moved by the tilt of the phone (--tx, --ty run from -1 to 1) */
-  transform: translate(calc(var(--tx, -0.3) * 45%), calc(var(--ty, -0.4) * 40%));
+  /* moved by the tilt of the phone (set straight on transform by main.js) */
+  transform: translate(-13%, -16%);
   opacity: 0.8;
 }
 .stamp:not(.top) .shine { display: none; }
@@ -3980,13 +3982,8 @@ body.party .stage {
   border-radius: calc(var(--sw) * 0.06);
   padding: calc(var(--sw) * 0.055) calc(var(--sw) * 0.06) 0;
   gap: calc(var(--sw) * 0.03);
-  /* ticket notches on both sides, level with the tear line */
-  -webkit-mask:
-    radial-gradient(circle var(--notch) at 0 calc(100% - var(--stub)), #0000 97%, #000) left / 51% 100% no-repeat,
-    radial-gradient(circle var(--notch) at 100% calc(100% - var(--stub)), #0000 97%, #000) right / 51% 100% no-repeat;
-  mask:
-    radial-gradient(circle var(--notch) at 0 calc(100% - var(--stub)), #0000 97%, #000) left / 51% 100% no-repeat,
-    radial-gradient(circle var(--notch) at 100% calc(100% - var(--stub)), #0000 97%, #000) right / 51% 100% no-repeat;
+  -webkit-mask: none;
+  mask: none;
   box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.75), inset 0 0 0 5px rgba(255, 255, 255, 0.35);
 }
 /* A holographic foil strip down the left edge */
@@ -4170,8 +4167,6 @@ body.party .stage {
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
   touch-action: pan-x;
-  -webkit-mask: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
-  mask: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
 }
 .ava-strip::-webkit-scrollbar { display: none; }
 .ava {
@@ -4269,7 +4264,7 @@ body.party .stage {
   margin-left: -9px;
   transform-origin: 50% 0;
   rotate: calc(var(--sway) + var(--swing, 0deg));
-  transition: rotate 0.6s cubic-bezier(.3, 1.4, .5, 1);
+  transition: rotate 0.9s cubic-bezier(.3, 1.4, .5, 1);
 }
 .ed-cord {
   display: block;
@@ -4303,7 +4298,6 @@ body.party .stage {
   top: 2px;
   width: 11px;
   height: 17px;
-  filter: drop-shadow(0 0 2px #ffd27a);
 }
 /* The glow: a pre-blurred halo that only fades */
 .ed-halo {
@@ -4367,12 +4361,8 @@ body.party .stage {
 /* Brighter neon on the shelf name: a white core and a wide bloom (static), slightly crooked */
 .tape-item[aria-selected="true"] b {
   rotate: -2deg;
-  text-shadow:
-    0 0 1px #fff,
-    0 0 4px #fff,
-    0 0 12px color-mix(in srgb, var(--neon, #e7ff3d) 90%, transparent),
-    0 0 28px color-mix(in srgb, var(--neon, #e7ff3d) 70%, transparent),
-    0 0 60px color-mix(in srgb, var(--neon, #e7ff3d) 45%, transparent);
+  text-shadow: 0 0 3px #fff, 0 0 16px color-mix(in srgb, var(--neon, #e7ff3d) 80%, transparent);
+  animation: none;
 }
 
 /* Motion controls guide: little phones doing each move */
@@ -4418,21 +4408,80 @@ body.party .stage {
 .mo-phone.lift { animation: mo-lift 1.6s cubic-bezier(.5, 0, .2, 1) infinite; }
 .mo-phone.tilt { animation: mo-tilt 3s ease-in-out infinite alternate; }
 @keyframes mo-flick {
-  0%, 30%, 100% { transform: none; }
-  45% { transform: translateX(12px) rotate(8deg); }
-  60% { transform: translateX(-3px); }
+  0%, 30%, 100% { transform: perspective(200px); }
+  45% { transform: perspective(200px) rotateY(50deg); }
+  62% { transform: perspective(200px) rotateY(-6deg); }
 }
 @keyframes mo-twist {
   0%, 30%, 100% { transform: none; }
   50% { transform: rotate(-40deg); }
 }
 @keyframes mo-lift {
-  0%, 30%, 100% { transform: none; }
-  45% { transform: translateY(-12px); }
-  60% { transform: translateY(2px); }
+  0%, 30%, 100% { transform: perspective(200px); }
+  45% { transform: perspective(200px) rotateX(-50deg); }
+  62% { transform: perspective(200px) rotateX(6deg); }
 }
 @keyframes mo-tilt {
   from { transform: perspective(200px) rotateY(-25deg); }
   to { transform: perspective(200px) rotateY(25deg); }
 }
 .pad.want .keys.three { grid-template-columns: 2fr 1fr 1fr; }
+
+/* Ticket notches: two circles in the stage colour, level with the tear line (cheaper than a
+   mask on a card that moves) */
+.tk-stub::before,
+.tk-stub::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--notch) * -1 - 1px);
+  width: calc(var(--notch) * 2);
+  height: calc(var(--notch) * 2);
+  border-radius: 50%;
+  background: var(--stage, #0d0d0d);
+}
+.tk-stub::before { left: calc(var(--notch) * -1); }
+.tk-stub::after { right: calc(var(--notch) * -1); }
+.tk-stub { overflow: visible; }
+
+/* Pop-overs used for overlays (island, confetti, tips) need no backdrop layer of their own */
+[popover]::backdrop { display: none; }
+/* The bulb strand: a small, self-contained box (its glows used to stretch it into a huge layer) */
+.edison { contain: layout style; }
+.ed-halo { width: 44px; height: 44px; margin-left: -22px; }
+
+/* A pass is flat until it's turned over: no back face, no 3D, no extra GPU layers */
+.stamp:not(.has-back) { perspective: none; }
+.stamp:not(.has-back) .flipper { transform-style: flat; }
+.stamp:not(.has-back) .face { backface-visibility: visible; -webkit-backface-visibility: visible; }
+.stamp:not(.has-back) .face.back { display: none; }
+/* The strand over the title is a small, clipped box */
+.edison.over-title { height: 96px; contain: layout style paint; }
+
+/* Only real layers: the egg-effects box exists only while an effect plays; the lid is 3D only
+   while it opens; the strand is one deliberate, small layer (not a huge "overlap" layer). */
+.book-fx:empty { display: none; }
+.lid { backface-visibility: visible; -webkit-backface-visibility: visible; }
+.stamp.peek .lid { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.edison.over-title { will-change: transform; }
+
+/* The liquid's idle ripple: a wavy highlight sliding along the surface (transform only) */
+.ripple {
+  position: absolute;
+  left: 0;
+  width: 200%;
+  height: 8px;
+  bottom: calc(var(--lvl, 0) * 100% - 3px);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8'%3E%3Cpath d='M0 4q10-4 20 0t20 0' fill='none' stroke='white' stroke-opacity='.7' stroke-width='2'/%3E%3C/svg%3E") 0 0 / 40px 8px repeat-x;
+  pointer-events: none;
+  display: none;
+  transition: bottom 0.5s var(--spring);
+}
+.stamp.top.reading .ripple {
+  display: block;
+  animation: ripple 2.6s linear infinite;
+}
+@keyframes ripple {
+  to { transform: translateX(-40px); }
+}
+.stamp.scrubbing .ripple { opacity: 0; }
+.panel-up .ripple { animation-play-state: paused; }

@@ -862,30 +862,42 @@ await run("motion controls: flick for books, twist for shelves, flick up to add,
     await page.goto(SITE);
     await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
     await starter(page); // (the first tap is what lets an iPhone start the sensors)
-    const motion = (acc, rot = {}) => page.evaluate(([acc, rot]) => dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: 0, z: 0, ...acc }, rotationRate: { alpha: 0, beta: 0, gamma: 0, ...rot }, interval: 16 })), [acc, rot]);
+    // A gesture as the gyroscope reports it: a quick turn about one axis, the swing back, then still.
+    const motion = (axis, peak) =>
+      page.evaluate(([axis, peak]) => {
+        const fire = (v) => dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: 0, z: 0 }, rotationRate: { alpha: 0, beta: 0, gamma: 0, [axis]: v }, interval: 16 }));
+        const n = 10;
+        for (let i = 0; i < n; i++) fire(peak * Math.sin((Math.PI * (i + 0.5)) / n));
+        for (let i = 0; i < n; i++) fire(-peak * Math.sin((Math.PI * (i + 0.5)) / n));
+      }, [axis, peak]);
+    // (events dispatched in one go share a timestamp, so settle with a still pause between moves)
+    const still = () => page.evaluate(() => new Promise((ok) => {
+      const id = setInterval(() => dispatchEvent(new DeviceMotionEvent("devicemotion", { rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 })), 16);
+      setTimeout(() => (clearInterval(id), ok()), 450);
+    }));
     const first = (await app(page)).top;
-    await motion({ x: 16 });
+    await motion("gamma", 400);
     await page.waitForFunction((t) => globalThis.__shelfie.top !== t, first);
-    await page.waitForTimeout(800);
-    await motion({ x: -16 });
+    await still();
+    await motion("gamma", -400);
     await page.waitForFunction((t) => globalThis.__shelfie.top === t, first);
-    await page.waitForTimeout(800);
-    await motion({ x: 3 }); // a little nudge is ignored
-    await page.waitForTimeout(300);
+    await still();
+    await motion("gamma", 60); // a little wobble is ignored
+    await still();
     assert.equal((await app(page)).top, first);
-    await motion({}, { alpha: -400 });
+    await motion("alpha", -600);
     await page.waitForFunction(() => globalThis.__shelfie.shelf === "want");
-    await page.waitForTimeout(800);
-    await motion({ y: 15 });
+    await still();
+    await motion("beta", 500);
     await page.waitForSelector("#panel-add[aria-hidden=false]");
     // No gestures while a panel is open.
-    await page.waitForTimeout(800);
-    await motion({}, { alpha: -400 });
+    await still();
+    await motion("alpha", -600);
     await page.waitForTimeout(400);
     assert.equal((await app(page)).shelf, "want");
     await page.keyboard.press("Escape");
     for (let i = 0; i < 25; i++) await page.evaluate((i) => dispatchEvent(new DeviceOrientationEvent("deviceorientation", { alpha: 0, beta: i ? 60 : 45, gamma: i ? 18 : 0 })), i);
-    await page.waitForFunction(() => /deg$/.test(document.querySelector("#deck").style.rotate));
+    await page.waitForFunction(() => /px$/.test(document.querySelector("#deck").style.translate) && document.querySelector("#deck").style.translate !== "0px 0px");
   } finally {
     await ctx.close();
   }

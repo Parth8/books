@@ -1,5 +1,10 @@
 // Confetti, sparks and floating "+XP" numbers on one full-screen canvas that only runs while
 // something is flying.
+//
+// Lifetimes are in time, not frames: on a busy phone, frame-counted confetti lived longer and
+// longer, keeping a full-screen canvas redrawing and making the phone busier still. There's
+// also a cap on how many pieces fly at once, and emoji and text are drawn once into small
+// sprites (re-shaping text every frame is slow, especially in Safari).
 
 import { prefersReducedMotion } from "./util.js";
 import { toTop } from "./island.js";
@@ -10,6 +15,28 @@ let ctx;
 let parts = [];
 let running = false;
 let dpr = 1;
+let last = 0;
+const MAX_PARTS = 220;
+const sprites = new Map();
+/** Emoji or "+XP" text drawn once onto a little canvas, then stamped. */
+function sprite(text, size, color) {
+  const key = `${text}|${size | 0}|${color}`;
+  let c = sprites.get(key);
+  if (c) return c;
+  c = document.createElement("canvas");
+  const px = Math.ceil(size * 1.6 * dpr);
+  c.width = Math.max(4, Math.ceil(px * Math.max(1, text.length * 0.6)));
+  c.height = px;
+  const x = c.getContext("2d");
+  x.font = `${size * dpr}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+  x.textAlign = "center";
+  x.textBaseline = "middle";
+  x.fillStyle = color;
+  x.fillText(text, c.width / 2, c.height / 2);
+  if (sprites.size > 80) sprites.clear();
+  sprites.set(key, c);
+  return c;
+}
 
 function ensure() {
   if (canvas) return;
@@ -20,7 +47,7 @@ function ensure() {
   document.body.append(canvas);
   ctx = canvas.getContext("2d");
   const size = () => {
-    dpr = Math.min(2, devicePixelRatio || 1);
+    dpr = Math.min(1.5, devicePixelRatio || 1);
     canvas.width = innerWidth * dpr;
     canvas.height = innerHeight * dpr;
   };
@@ -28,17 +55,22 @@ function ensure() {
   addEventListener("resize", size);
 }
 
-function loop() {
+function loop(t) {
+  // How many 60 fps frames passed (so physics and lifetimes run in real time).
+  const k = Math.min(4, Math.max(0.25, (t - (last || t - 16.7)) / 16.7));
+  last = t;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, innerWidth, innerHeight);
-  parts = parts.filter((p) => p.life > 0);
+  parts = parts.filter((p) => p.life > 0 && p.y < innerHeight + 60);
+  if (parts.length > MAX_PARTS) parts = parts.slice(-MAX_PARTS);
   for (const p of parts) {
-    p.vx *= p.drag;
-    p.vy = p.vy * p.drag + p.g;
-    p.x += p.vx;
-    p.y += p.vy;
-    p.rot += p.vr;
-    p.life -= 1;
+    const drag = Math.pow(p.drag, k);
+    p.vx *= drag;
+    p.vy = p.vy * drag + p.g * k;
+    p.x += p.vx * k;
+    p.y += p.vy * k;
+    p.rot += p.vr * k;
+    p.life -= k;
     const fade = Math.min(1, p.life / 30);
     ctx.save();
     ctx.globalAlpha = fade;
@@ -55,16 +87,15 @@ function loop() {
     } else if (p.kind === "star") {
       star(p.size);
     } else {
-      ctx.font = `${p.size}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(p.text, 0, 0);
+      const sp = sprite(p.text, p.size, p.color);
+      ctx.drawImage(sp, -sp.width / dpr / 2, -sp.height / dpr / 2, sp.width / dpr, sp.height / dpr);
     }
     ctx.restore();
   }
   if (parts.length) requestAnimationFrame(loop);
   else {
     running = false;
+    last = 0;
     ctx.clearRect(0, 0, innerWidth, innerHeight);
     try {
       canvas.hidePopover?.();

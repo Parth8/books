@@ -48,7 +48,7 @@ export function startStutters() {
     setTimeout(tick, 900 + Math.random() * 1800);
     if (document.visibilityState !== "visible") return;
     const panelUp = document.body.classList.contains("panel-up");
-    const bulbs = [...document.querySelectorAll(panelUp ? ".panel .ed-bulb, .panel .p-h" : ".hud .ed-bulb")].filter((b) => b.getClientRects().length);
+    const bulbs = [...document.querySelectorAll(panelUp ? ".panel .ed-bulb, .panel .p-h" : ".hud .ed-bulb, .fairy i")].filter((b) => b.getClientRects().length);
     for (let k = Math.random() < 0.25 ? 2 : 1; k > 0 && bulbs.length; k--) {
       const b = bulbs.splice(Math.floor(Math.random() * bulbs.length), 1)[0];
       if (b.classList.contains("p-h")) {
@@ -58,6 +58,10 @@ export function startStutters() {
         continue;
       }
       const opts = { duration: 380 + Math.random() * 260, easing: "steps(1)" };
+      if (b.matches(".fairy i")) {
+        b.animate(STUTTER, opts);
+        continue;
+      }
       b.querySelector(".ed-glass")?.animate(STUTTER, opts);
       b.querySelector(".ed-halo")?.animate(STUTTER, opts);
     }
