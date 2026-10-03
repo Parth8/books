@@ -15,7 +15,8 @@ No account, no ads, no build step. Everything lives on your own device.
 - **The stage and the macropad.** Your books and the keys for them. That's where reading happens.
 - **Stats** (pull up the bar at the bottom, or tap the LCD): your level, goals, numbers and stickers. Nothing else.
 - **You** (the round avatar, top right): everything about you and your data:
-  - your name;
+  - your profile animal: slide through the visitors (or use the arrows) and each one says hello in its own voice as it lands;
+  - your name, and your **@username** when you're logged in;
   - whether your books are backed up, and your account;
   - your library tools (Goodreads, save a copy, restore a copy);
   - settings, how to use, add to home screen;
@@ -35,8 +36,9 @@ No account, no ads, no build step. Everything lives on your own device.
 
   Sign up, log in, or later.
 - **Bring your books.** Then it offers to import your Goodreads library.
-- **Explainer pop-ups.** The first time you meet each part of the app (the stamp, the macropad, the shelf tape, the LCD, the stats bar), the screen dims around it and a bright bubble says what it does.
-- **Gesture hints.** A small chip with a ghost finger shows the next gesture you haven't tried yet.
+- **Explainer pop-ups.** On your first visit, as you meet each part of the app (the pass, the macropad, the shelf tape, the LCD, the stats bar), the screen dims around it and a bright bubble says what it does. They come on that first visit only. A tip that couldn't show then is skipped, not saved for later.
+- **Gesture hints.** A small chip with a ghost finger shows the next gesture you haven't tried yet. Tap it to dismiss it. Each hint shows on at most two app opens, and hints stop altogether after your first three opens. Finishing the tour counts as having learnt the gestures it practised.
+- **Remembered everywhere.** What you've seen is kept in your data, so it syncs with your account: the home-screen app, another browser or a new phone won't explain it all again.
 - **Replaying it.** You → **How to use** replays the tour or brings the pop-ups back.
 
 ## Import from Goodreads
@@ -99,11 +101,16 @@ Everything also works from a keyboard: arrows flip the pile and turn pages, the 
 
 Built from the moodboard: tactile neo-brutalism on near-black.
 
-- **Stamps**: every book is a perforated postage stamp with a big denomination (how far through you are) and its title in heavy condensed type. Finished books get **postmarked**.
+- **Arcade passes**: every book is a retro arcade ticket in fluorescent card stock, chosen per book and never the colour of the stage behind it.
+  - **Front:** "★ ADMIT ONE ★", your progress shown like credits, a holographic foil strip, and ticket notches at a dashed tear line.
+  - **Stub:** a serial number, a barcode, and NOW PLAYING / UP NEXT / HIGH SCORE.
+  - **Finished books** get a hole punched through the stub and a red "READ ✓" rubber stamp.
+  - **The back** is the fine print (pages, dates, genre, blurb), with a **Find on Amazon** button.
+  - **The + pass** says INSERT COIN.
 - **The macropad**: the dock is a cream keyboard with chunky keycaps, a green pixel LCD and a knob with a glowing ring.
 - **Feeling keys**: rate finished books with glossy emoji keycaps (🫠 😐 🙂 😍 🤯).
 - **Posters**: full-screen flat colour with giant condensed type that slams in line by line.
-- **Bento stats**: level, streak, a watch-face goal ring (spin it to set your goal), the week, totals, and badges as mini stamps.
+- **Bento stats**: level, streak, a watch-face goal ring (spin it to set your goal), the week, totals, and badges as stickers.
 - **Generated covers**: books without a cover (and any cover still loading) get grainy gradient art with a bold shape (flower, cube, sun, rings, stripes, dots), picked from the title so it's always the same.
 
 Fonts: Archivo (condensed, heavy), Space Mono and Silkscreen, all self-hosted.
@@ -194,6 +201,7 @@ It's built like a password manager, so a breach of the server gives an attacker 
 - **No personal data stored.** Your username or email is stored only as a keyed hash, never as text, and nobody is ever emailed. Rate-limit counters use hashes, not IP addresses.
 - **Sessions.** Each login gets a random token. The server keeps only its SHA-256, and it expires after 30 days unused. Logging out ends it; **log out everywhere** ends them all. Changing your password signs out your other devices.
 - **Forgot your password?** When you sign up you get a one-time **recovery code**: copy it, or save it as a file. To make sure you've seen it, you type its last four characters while it's still on screen, so there's nothing to memorise. The code sets a new password and keeps your books. We can't reset a password for you, because we can't read your account; that's the point.
+- **Change your username.** You → **Change username** (needs your password). Your books, backup, password and this session stay the same; the old username stops working, and a name that's taken is refused.
 - **Lost the recovery code?** While you're logged in on any device, You → Account → **New recovery code** makes a fresh one (it needs your password), and the old one stops working.
 - **Lost both** (no password, no code, no logged-in device)? The backup can't be opened by anyone, including us. The books on your phone stay where they are, and you can start a new account from them.
 - **Rate limits** on every account action. A quick per-location limit sits in front of durable limits stored in the database, which apply across all of Cloudflare:
@@ -244,7 +252,7 @@ A daily reader who opens the app a few times and reads in a few sessions makes a
 4. **Edit code** → paste the new `worker/worker.js` → Deploy. The tables create themselves on first use.
 5. `…/api/health` now shows `"accounts":true`, and the Account section appears in You.
 
-When `worker.js` changes, paste it again and deploy. Tables and new columns are added by themselves.
+When `worker.js` changes (this round: username changes and cover lookups by title), paste it again and deploy. Tables and new columns are added by themselves.
 
 ## Sync codes, and why data seemed to disappear
 
@@ -285,12 +293,35 @@ Synced copies expire after 400 days without a save.
 
 ---
 
+## Find on Amazon
+
+Every pass has a **Find on Amazon** button on its back (tap a pass to turn it over), and books on the Want shelf get a 🛒 **GET IT** key on the macropad. It searches Amazon India for the ISBN when the book has one, otherwise for the title and author. It opens in a new tab, with no referrer and nothing about you attached.
+
+## Motion controls
+
+Switch on You → Settings → **Motion controls** (iPhone asks for permission, which is why it's a switch). Then:
+
+| Move | What it does |
+|---|---|
+| **Flick** the phone right / left | Next / previous book |
+| **Twist** it like a steering wheel | Next / previous shelf |
+| **Flick up** | Add a book |
+| **Tilt** | The pile leans in 3D, the background shifts, the bulbs and fairy lights swing, and a hotspot of light slides across the cover |
+
+- **Learning the moves.** A guide with little animated phones shows each move. The first couple of times you use a move, the island says what it did.
+- **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open. There's also a short cooldown after each one, so one flick is one book.
+- **Level is relative.** "Level" is however you're holding the phone, learnt over a couple of seconds.
+- **Privacy.** Nothing about how you move your phone is stored or sent.
+- **Reduce Motion.** With Reduce Motion on, tilt effects are off; the moves still work.
+- **Introducing it.** On a phone that supports it, Shelfie shows it off once, on a later visit.
+
 ## The arcade
 
 - **Keycaps.** Sculpted and glossy, with a streak of light like translucent keycaps. They press down fast and bounce back up, with a coloured glow underneath that brightens while you hold.
 - **Round arcade buttons** for adding pages (+1, +5, +10, +25), and a ▶ on START.
 - **Fairy lights** strung over the macropad twinkle at their own pace. They chase on big moments: finishing a book, a goal, a level, a sticker, an import, a jackpot.
-- **Neon.** The shelf you're on glows like a sign and flickers now and then.
+- **Neon.** The shelf you're on glows like a sign, hangs a little crooked, and flickers now and then.
+- **Edison bulbs.** Warm filament bulbs hang on drooping wires behind the shelf name (backlighting it) and over every panel title, and one dangles off each section heading. Every second or two a random bulb stutters, as if the wiring's dodgy. Headings hang slightly crooked, like hand-hung signs.
 - **Levers** in the danger zone.
 - **Jackpot.** Now and then, reading pays out bonus XP with an arcade poster. It happens at most once every ten minutes, so it stays a surprise.
 
@@ -317,12 +348,15 @@ It's built so that motion stays cheap:
 
 ## Sharp covers
 
+- **No more softening.** Covers were going soft because the slow "drift" zoomed an image that was already drawn. It now slides instead, and the image is drawn a little larger than its window.
+- **A sharper copy by title and author.** Any book without a Google cover (starter books, Open Library books, Goodreads imports) asks the Worker once for one, by ISBN or else by title and author. Only the same title counts (a subtitle is fine), so you never get a lookalike.
+- **Sheen.** A glint sweeps across the cover on top every 5–10 seconds, each book on its own rhythm, and a soft hotspot follows the tilt of your phone.
 - **Google Books covers** are requested at the size your screen needs, up to 1080 × 1620, so zooming in stays crisp.
-- **ISBN-only books.** Open Library's largest covers are only 325 × 500. So a book with only an ISBN (most Goodreads imports) asks the Worker once whether Google has a sharper cover. The answer is remembered on your device and cached at Cloudflare's edge for a month.
+- **Why the lookup exists.** Open Library's largest covers are only 325 × 500, too soft for a phone screen. Each lookup answer is remembered on your device and cached at Cloudflare's edge for a month, so a book is looked up once. Search results never trigger lookups.
 
 ## Home screen, and chai
 
-- **Add to home screen.** You → **Add to home screen** shows a guide that matches your browser: pictures for iPhone and iPad Safari (including iOS 26's ••• menu) and Mac Safari, steps for Firefox, Edge and Chrome on iPhone, and the one-tap install button where Chrome or Edge offer one. Apps' built-in browsers get an "Open in Safari" link. It's offered once on a later visit (never the first), and once more at most two weeks later. After that it's only the **Add to home screen** key in Stats, and it disappears once Shelfie is installed.
+- **Add to home screen.** You → **Add to home screen** shows a guide that matches your browser: pictures for iPhone and iPad Safari (including iOS 26's ••• menu) and Mac Safari, steps for Firefox, Edge and Chrome on iPhone, and the one-tap install button where Chrome or Edge offer one. Apps' built-in browsers get an "Open in Safari" link. It's offered once on a later visit (never the first), and once more at most two weeks later. After that it's only the **Add to home screen** row in You, and it disappears once Shelfie is installed.
 - **Chip in for a chai.** A ticket at the very bottom of You, after everything else. It's never a pop-up and never in the way of reading.
 
 ---
@@ -358,11 +392,13 @@ js/
   critters.js         The animals that wander by
   goodreads.js        Reads a Goodreads export (CSV) into books
   account.js          Accounts: key derivation, wrapped keys, compressed + encrypted backups, sessions
-  covers.js           Sharp covers: sizes for Google covers, HD lookups for ISBN-only books
+  covers.js           Sharp covers: sizes for Google covers, HD lookups by ISBN or title
   install.js          How this browser adds a web app to the home screen (from the track app)
   guide.js            Picture guides for adding to the home screen on Apple devices
   home.js             The add-to-home-screen pop-up and the chai card
   lever.js            The arcade lever (pull all the way down to confirm)
+  lights.js           Edison bulbs and their random stutters
+  gyro.js             Motion controls: tilt, flick, twist, lift
   util.js             Safe DOM builder, seeded random
 worker/worker.js      The Cloudflare Worker: holds the Google key, searches, covers, accounts (D1), encrypted backups
 tests/

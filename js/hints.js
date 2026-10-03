@@ -1,5 +1,8 @@
 // Gesture hints: a little chip with a ghost finger that shows the next gesture you haven't
-// tried yet. Do the gesture once and that hint never comes back.
+// tried yet. Do the gesture once (or tap the chip) and that hint never comes back. Each hint
+// gives up after showing on 2 app opens, and what you've learned is kept in your synced data,
+// so the home-screen app and the browser don't nag you separately. Hints only come in your
+// first three app opens at all.
 
 import { h } from "./util.js";
 
@@ -19,35 +22,80 @@ try {
   learned = new Set(JSON.parse(localStorage.getItem(KEY) || "[]"));
 } catch {}
 
-export function createHints(root) {
+const SHOWS = "shelfie.hintShows";
+const MAX_OPENS = 2;
+let shows = {};
+try {
+  shows = JSON.parse(localStorage.getItem(SHOWS) || "{}") || {};
+} catch {}
+const countedThisOpen = new Set();
+let forced = false; // asked for again (How to use): show them whatever the count
+
+/** `seen(k)` / `mark(k)`: the synced record (your data), on top of this device's own. */
+export function createHints(root, { seen = () => false, mark = () => {}, active = () => true } = {}) {
   const finger = h("i", { class: "ghost", "aria-hidden": "true" });
   const label = h("span", { class: "hint-text" });
-  const chip = h("div", { class: "hint", role: "status" }, finger, label);
+  const close = h("span", { class: "hint-x", "aria-hidden": "true", text: "✕" });
+  const chip = h("button", { type: "button", class: "hint", "aria-label": "Hint. Tap to dismiss." }, finger, label, close);
   root.append(chip);
   let shown = null;
+  const known = (k) => learned.has(k) || seen(`h:${k}`);
+
+  function learn(k) {
+    const was = known(k);
+    learned.add(k);
+    try {
+      localStorage.setItem(KEY, JSON.stringify([...learned]));
+    } catch {}
+    if (!seen(`h:${k}`)) mark(`h:${k}`);
+    if (shown === k) {
+      shown = null;
+      chip.classList.remove("on");
+    }
+    return !was;
+  }
+  // Tapping the chip means "got it".
+  chip.addEventListener("click", () => shown && learn(shown));
 
   return {
     /** Show the first hint from `order` that hasn't been learned. */
     offer(order) {
-      const next = order.find((k) => !learned.has(k)) || null;
+      let next = null;
+      for (const k of forced || active() ? order : []) {
+        if (known(k)) continue;
+        // Shown on two app opens already: let it go.
+        if (!countedThisOpen.has(k) && (shows[k] || 0) >= MAX_OPENS) {
+          learn(k);
+          continue;
+        }
+        next = k;
+        break;
+      }
       if (next === shown) return;
       shown = next;
       chip.classList.toggle("on", !!next);
       if (!next) return;
       label.textContent = HINTS[next].text;
       chip.dataset.anim = HINTS[next].anim;
-    },
-    learn(k) {
-      if (learned.has(k)) return;
-      learned.add(k);
-      try {
-        localStorage.setItem(KEY, JSON.stringify([...learned]));
-      } catch {}
-      if (shown === k) {
-        shown = null;
-        chip.classList.remove("on");
+      if (!countedThisOpen.has(next)) {
+        countedThisOpen.add(next);
+        shows[next] = (shows[next] || 0) + 1;
+        try {
+          localStorage.setItem(SHOWS, JSON.stringify(shows));
+        } catch {}
       }
     },
-    has: (k) => learned.has(k),
+    learn,
+    has: (k) => known(k),
+    /** Forget everything learned (How to use → pop-ups again). */
+    reset() {
+      forced = true;
+      learned = new Set();
+      shows = {};
+      try {
+        localStorage.removeItem(KEY);
+        localStorage.removeItem(SHOWS);
+      } catch {}
+    },
   };
 }

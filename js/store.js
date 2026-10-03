@@ -51,7 +51,7 @@ export function empty() {
   // removal survives syncing with a copy that still has the book.
   // name: what to call you (a first name or nickname, nothing else). toured: the tour was seen,
   // so a newly linked device skips it.
-  return { v: 1, books: [], log: {}, xp: 0, goal: 20, goalMonth: 2, goalYear: 24, goalsAt: 0, badges: {}, eggs: [], gone: {}, seen: false, toured: false, name: "", nameAt: 0, resetAt: 0 };
+  return { v: 1, books: [], log: {}, xp: 0, goal: 20, goalMonth: 2, goalYear: 24, goalsAt: 0, badges: {}, eggs: [], gone: {}, seen: false, toured: false, name: "", nameAt: 0, resetAt: 0, guide: {}, avatar: "", avatarAt: 0 };
 }
 
 /** A first name or nickname: printable, trimmed, at most 24 characters. */
@@ -351,6 +351,8 @@ export function merge(a, b) {
   for (const [k, v] of Object.entries(a.badges)) badges[k] = !badges[k] || v < badges[k] ? v : badges[k];
   const goals = (b.goalsAt || 0) > (a.goalsAt || 0) ? b : a;
   const sorted = (o) => Object.fromEntries(Object.entries(o).sort(([x], [y]) => (x < y ? -1 : 1)));
+  const guide = { ...a.guide };
+  for (const [k, v] of Object.entries(b.guide || {})) guide[k] = guide[k] ? Math.min(guide[k], v) : v;
   return {
     ...empty(),
     books: kept,
@@ -366,6 +368,8 @@ export function merge(a, b) {
     seen: a.seen || b.seen,
     toured: !!(a.toured || b.toured),
     resetAt,
+    guide: sorted(guide),
+    ...((b.avatarAt || 0) > (a.avatarAt || 0) ? { avatar: b.avatar || "", avatarAt: b.avatarAt } : { avatar: a.avatar || "", avatarAt: a.avatarAt || 0 }),
     ...((b.nameAt || 0) > (a.nameAt || 0) ? { name: b.name || "", nameAt: b.nameAt } : { name: a.name || b.name || "", nameAt: a.nameAt || b.nameAt || 0 }),
     ...(a._owl || b._owl ? { _owl: [a._owl, b._owl].filter(Boolean).sort().pop() } : {}),
   };
@@ -392,11 +396,29 @@ export function normalise(data) {
   if (!data || data.v !== 1 || !Array.isArray(data.books)) return empty();
   const s = { ...empty(), ...data };
   s.books = s.books.filter((b) => b && typeof b.id === "string" && typeof b.title === "string");
-  for (const k of ["log", "badges", "gone"]) if (!s[k] || typeof s[k] !== "object" || Array.isArray(s[k])) s[k] = {};
+  for (const k of ["log", "badges", "gone", "guide"]) if (!s[k] || typeof s[k] !== "object" || Array.isArray(s[k])) s[k] = {};
   if (!Array.isArray(s.eggs)) s.eggs = [];
   if (!Number.isFinite(s.xp)) s.xp = 0;
   s.name = cleanName(s.name);
+  if (typeof s.avatar !== "string" || !/^[a-z]{0,12}$/.test(s.avatar)) s.avatar = "";
   return s;
+}
+
+/**
+ * The guide: which tips, hints and tours you've already seen, wherever you saw them. Kept in
+ * your data (so it syncs), so a new browser or the home-screen app doesn't explain it all again.
+ */
+export function markSeen(state, keys, now = new Date()) {
+  const fresh = [].concat(keys).filter((k) => typeof k === "string" && k.length <= 40 && !state.guide?.[k]);
+  if (!fresh.length) return state;
+  return { ...state, guide: { ...state.guide, ...Object.fromEntries(fresh.map((k) => [k, now.getTime()])) } };
+}
+export const seen = (state, key) => !!state.guide?.[key];
+
+/** Your profile animal (one of the visitors). */
+export function setAvatar(state, id, now = new Date()) {
+  const a = typeof id === "string" && /^[a-z]{1,12}$/.test(id) ? id : "";
+  return { state: { ...state, avatar: a, avatarAt: now.getTime() }, events: [] };
 }
 
 /** Everything gone, for a fresh start. Marked, so other open tabs follow instead of restoring. */

@@ -432,6 +432,21 @@ export function createAccount({ base, get, put, merge, onStatus, onSignedOut, on
       }, ms);
     },
 
+    /** A new username (or email). Needs the password. Your backup and this session stay. */
+    async rename(rawLogin, password) {
+      if (!me) throw new Error("Log in first.");
+      const login = cleanLogin(rawLogin);
+      if (!login) throw new Error("Use a username (3 to 32 letters, numbers, dots, dashes or underscores) or an email address.");
+      if (login === me.login) return login;
+      const { data: pre } = await call("/api/auth/prelogin", { body: { login: me.login } });
+      const { auth } = await fromPassword(password, pre.salt, pre.kdf);
+      await call("/api/auth/rename", { auth: true, body: { auth, login } });
+      me = { ...me, login };
+      await writeMe(me);
+      tell({ state: "idle", login });
+      return login;
+    },
+
     /** A fresh recovery code (the old one stops working). Needs the password. */
     async newRecovery(password) {
       if (!me) throw new Error("Log in first.");

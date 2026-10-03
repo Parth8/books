@@ -96,7 +96,7 @@ export function safeCover(url) {
 
 export function coverOf(book) {
   if (safeCover(book.img)) return book.img;
-  const hd = knownHd(book.isbn);
+  const hd = knownHd(book);
   if (hd) return hd;
   if (Number.isInteger(book.cover)) return `https://covers.openlibrary.org/b/id/${book.cover}-L.jpg?default=false`;
   // Imported books often only have an ISBN: Open Library has covers by ISBN too.
@@ -126,9 +126,9 @@ export function picture(book) {
     img.addEventListener("error", () => img.remove(), { once: true });
     wrap.append(img);
   }
-  // No Google cover yet, but an ISBN: look for a sharp one, and swap it in when it arrives.
-  if (!safeCover(book.img)?.startsWith("https://books.google") && book.isbn && knownHd(book.isbn) === undefined) {
-    findHd(book.isbn).then((hd) => {
+  // No Google cover yet: look for a sharp one (by ISBN, or title and author), and swap it in.
+  if (!book.noHd && !safeCover(book.img)?.startsWith("https://books.google") && book.title && knownHd(book) === undefined) {
+    findHd(book).then((hd) => {
       if (!hd || !wrap.isConnected) return;
       const next = coverImg(hd);
       next.addEventListener("load", () => img?.remove(), { once: true });
@@ -137,6 +137,20 @@ export function picture(book) {
     });
   }
   return wrap;
+}
+
+/**
+ * Light on the cover: a glint that sweeps across now and then (each book on its own rhythm),
+ * and a soft hotspot that follows the tilt of your phone. Both only move (GPU).
+ */
+function shine(seed = 1) {
+  const r = rng(seed + 7);
+  return h(
+    "span",
+    { class: "shine", "aria-hidden": "true", vars: { "--shine-every": `${(5 + r() * 5).toFixed(1)}s`, "--shine-delay": `${(-r() * 6).toFixed(1)}s`, "--shine-angle": `${Math.round(100 + r() * 30)}deg` } },
+    h("i", { class: "glint" }),
+    h("i", { class: "hotspot" }),
+  );
 }
 
 const FEEL = ["", "🫠", "😐", "🙂", "😍", "🤯"];
@@ -148,37 +162,77 @@ function denomination(book) {
   return h("span", { class: "denom" }, book.rating ? h("b", { class: "emo", text: feelOf(book.rating) }) : h("b", { text: "✓" }));
 }
 
+/** A finished pass gets a rubber stamp (and a hole punched through it). */
 function postmark(book) {
   const d = book.finished ? new Date(book.finished) : new Date();
   const day = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }).toUpperCase();
   return h(
     "span",
     { class: "postmark", "aria-hidden": "true" },
-    h("span", { class: "pm-ring" }, h("small", { text: "FINISHED" }), h("b", { text: day }), h("small", { text: String(d.getFullYear()) })),
-    h("i", { class: "pm-waves" }),
+    h("span", { class: "pm-ring" }, h("small", { text: "READ ✓" }), h("b", { text: day }), h("small", { text: String(d.getFullYear()) })),
   );
 }
 
-/** A book as a stamp, front and back. */
+// Ticket stock: bright card in arcade colours, never the same as the stage it sits on.
+const STOCKS = ["#e7ff3d", "#ff6ad5", "#ffd60a", "#25c7ff", "#ff9b4a", "#b49bff", "#f6f1e6", "#7dffb0"];
+function stockOf(seed, tone) {
+  const near = { "#ff5a1f": "#ff9b4a", "#ffd60a": "#ffd60a" }[String(tone).toLowerCase()];
+  const options = STOCKS.filter((c) => c !== near);
+  return options[Math.abs(seed | 0) % options.length];
+}
+
+/** A barcode for the stub: static bars from the book's seed (pure decoration). */
+function barcode(seed) {
+  const r = rng(seed + 3);
+  let x = 0;
+  let bars = "";
+  while (x < 96) {
+    const w = 1 + Math.floor(r() * 3);
+    bars += `<rect x="${x}" y="0" width="${w}" height="20"/>`;
+    x += w + 1 + Math.floor(r() * 3);
+  }
+  return `<svg viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">${bars}</svg>`;
+}
+const serialOf = (seed) => String(Math.abs(seed | 0) % 1000000).padStart(6, "0");
+const SHELF_WORD = { reading: "NOW PLAYING", want: "UP NEXT", read: "HIGH SCORE" };
+
+/** Find this book on Amazon India: by ISBN when we have one, otherwise by title and author. */
+export function amazonUrl(book) {
+  const isbn = typeof book.isbn === "string" ? book.isbn.replace(/-/g, "") : "";
+  const q = /^[\dX]{10,13}$/.test(isbn) ? isbn : [book.title, book.author].filter(Boolean).join(" ");
+  return `https://www.amazon.in/s?k=${encodeURIComponent(q)}`;
+}
+
+/** A book as an arcade pass, front and back. */
 export function bookStamp(book, { tone } = {}) {
   const [bg, a] = paletteOf(book.seed);
   const year = book.year ? String(book.year) : "";
+  const stub = h(
+    "div",
+    { class: "tk-stub" },
+    h("span", { class: "tk-serial" }, h("small", { text: "No." }), ` ${serialOf(book.seed)}`),
+    h("span", { class: "tk-code", svg: barcode(book.seed) }),
+    h("span", { class: "tk-shelf", text: SHELF_WORD[book.shelf] || "PASS" }),
+  );
   const front = h(
     "div",
     { class: "face front" },
     h(
       "div",
-      { class: "paper" },
-      h("div", { class: "stamp-top" }, denomination(book), h("span", { class: "issuer" }, h("b", { text: "SHELFIE" }), h("small", { text: year || "POST" }))),
+      { class: "paper ticket" },
+      h("i", { class: "tk-foil", "aria-hidden": "true" }),
+      h("div", { class: "stamp-top" }, h("span", { class: "issuer" }, h("b", { text: "★ ADMIT ONE ★" }), h("small", { text: year ? `SHELFIE ARCADE · ${year}` : "SHELFIE ARCADE" })), denomination(book)),
       h(
         "div",
         { class: "win book-3d" },
         h("div", { class: "leaf" }, h("small", { text: "CHAPTER ONE" }), h("b", { text: book.title })),
-        h("div", { class: "lid" }, picture(book), h("canvas", { class: "liquid", "aria-hidden": "true" }), h("span", { class: "pg", "aria-hidden": "true" })),
+        h("div", { class: "lid" }, picture(book), h("canvas", { class: "liquid", "aria-hidden": "true" }), shine(book.seed), h("span", { class: "pg", "aria-hidden": "true" })),
         h("div", { class: "book-fx" }),
       ),
       h("div", { class: "cap" }, h("b", { text: book.title }), h("small", { text: book.author || "Unknown author" })),
+      stub,
       book.shelf === "read" ? postmark(book) : null,
+      book.shelf === "read" ? h("i", { class: "tk-punch", "aria-hidden": "true" }) : null,
     ),
   );
   const facts = [
@@ -195,11 +249,13 @@ export function bookStamp(book, { tone } = {}) {
     { class: "face back" },
     h(
       "div",
-      { class: "paper" },
+      { class: "paper ticket back-side" },
+      h("small", { class: "tk-terms", text: "THIS PASS ADMITS ONE READER · NO REFUNDS ON PLOT TWISTS" }),
       h("b", { class: "back-title", text: book.title }),
       h("small", { class: "back-by", text: book.author || "Unknown author" }),
       h("dl", { class: "facts" }, facts.map(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
       book.blurb ? h("p", { class: "blurb", text: book.blurb }) : null,
+      h("a", { class: "tk-buy", href: amazonUrl(book), target: "_blank", rel: "noopener noreferrer", "aria-label": `Find ${book.title} on Amazon` }, h("span", { text: "🛒" }), h("b", { text: "FIND ON AMAZON" }), h("small", { text: "↗" })),
       h("small", { class: "back-hint", text: "TAP TO FLIP BACK" }),
     ),
   );
@@ -210,7 +266,7 @@ export function bookStamp(book, { tone } = {}) {
       "data-id": book.id,
       tabIndex: -1,
       "aria-label": `${book.title}${book.author ? ` by ${book.author}` : ""}${book.shelf === "reading" ? `, page ${book.page} of ${book.pages}` : ""}`,
-      vars: { "--c1": a, "--cbg": bg, "--tone": tone || a },
+      vars: { "--c1": a, "--cbg": bg, "--tone": tone || a, "--stock": stockOf(book.seed, tone) },
     },
     h("i", { class: "stamp-shadow", "aria-hidden": "true" }),
     h("div", { class: "flipper" }, front, back),
@@ -229,7 +285,7 @@ export function addStamp() {
       h(
         "div",
         { class: "face front" },
-        h("div", { class: "paper" }, h("span", { class: "plus", "aria-hidden": "true" }, h("i"), h("i")), h("b", { class: "add-word", text: "ADD A BOOK" }), h("small", { class: "add-sub", text: "TAP · OR PULL IT UP" })),
+        h("div", { class: "paper ticket" }, h("small", { class: "add-coin", text: "INSERT COIN" }), h("span", { class: "plus", "aria-hidden": "true" }, h("i"), h("i")), h("b", { class: "add-word", text: "ADD A BOOK" }), h("small", { class: "add-sub", text: "TAP · OR PULL IT UP" })),
       ),
     ),
   );

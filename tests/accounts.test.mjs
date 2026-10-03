@@ -274,3 +274,22 @@ test("databases made before the op column get it added", async () => {
   assert.equal(r.status, 200);
   assert.equal(env.DB.rows("SELECT op FROM vaults")[0].op, "op-cccccccc3");
 });
+
+test("rename: a new username keeps the backup and the session; the old name stops working", async () => {
+  const a = await signup("ada");
+  await call("/api/vault", { method: "PUT", token: a.token, raw: JSON.stringify({ ...(await A.seal(a.dataKey, { n: 3 })), base: 0 }) });
+  await signup("bob");
+  const pre = await call("/api/auth/prelogin", { body: { login: "ada" } });
+  const { auth } = await A.fromPassword(PW, pre.body.salt, pre.body.kdf);
+  assert.equal((await call("/api/auth/rename", { token: a.token, body: { auth, login: "bob" } })).status, 409, "taken");
+  const wrong = await A.fromPassword("wrong wrong wrong", pre.body.salt, pre.body.kdf);
+  assert.equal((await call("/api/auth/rename", { token: a.token, body: { auth: wrong.auth, login: "ada.lovelace" } })).status, 401);
+  const r = await call("/api/auth/rename", { token: a.token, body: { auth, login: "Ada.Lovelace" } });
+  assert.equal(r.status, 200);
+  // Same session, same backup.
+  assert.deepEqual(await A.open(a.dataKey, (await call("/api/vault", { token: a.token })).body), { n: 3 });
+  assert.equal((await login("ada")).status, 401);
+  const again = await login("ada.lovelace");
+  assert.equal(again.status, 200);
+  assert.equal(env.DB.rows("SELECT * FROM users").length, 2);
+});

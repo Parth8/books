@@ -1,6 +1,7 @@
 // Spotlight tips: the first time you meet a part of the app, the screen dims except for that
-// part and a bright bubble explains what it does. Each tip shows once (remembered on this
-// device); "How to use" in Stats can reset them.
+// part and a bright bubble explains what it does. Each tip shows once, ever: it's remembered on
+// this device and in your synced data. They only come on your very first visit (as each part
+// appears); after that, "How to use" brings them back on request.
 
 import { h, prefersReducedMotion } from "./util.js";
 import { feel } from "./sfx.js";
@@ -19,6 +20,14 @@ const remember = () => {
 const queue = [];
 let showing = false;
 let blocked = () => false;
+let ext = { seen: () => false, mark: () => {}, allowed: () => true };
+let shownThisOpen = 0;
+const PER_OPEN = 8;
+
+/** Link to the synced record: seen(id), mark(id), and allowed() (e.g. only in the first days). */
+export function linkTips(opts) {
+  ext = { ...ext, ...opts };
+}
 
 /** Something else is on screen (a tour, a pop-up, a drag): tips wait. */
 export function holdTipsWhile(fn) {
@@ -28,27 +37,34 @@ export function holdTipsWhile(fn) {
 export function resetTips() {
   seen = new Set();
   remember();
+  shownThisOpen = 0;
+  forced = true; // asked for: show them whatever the day
 }
+let forced = false;
 
-export const tipSeen = (id) => seen.has(id);
+export const tipSeen = (id) => seen.has(id) || (!forced && ext.seen(`t:${id}`));
 
 /** { id, el: () => element, title, text, tone } — shown once, after anything already queued. */
 export function tip(t) {
-  if (seen.has(t.id) || queue.some((q) => q.id === t.id)) return;
+  if (tipSeen(t.id) || queue.some((q) => q.id === t.id)) return;
+  if (!forced && !ext.allowed()) return;
   queue.push(t);
   pump();
 }
 
 function pump() {
   if (showing || !queue.length) return;
+  if (!forced && shownThisOpen >= PER_OPEN) return; // the rest wait for another day
   if (blocked() || document.visibilityState !== "visible") return void setTimeout(pump, 900);
   const t = queue.shift();
   const el = t.el();
   const r = el?.getBoundingClientRect();
-  if (!r || !r.width || seen.has(t.id)) return pump();
+  if (!r || !r.width || tipSeen(t.id)) return pump();
   showing = true;
+  shownThisOpen++;
   seen.add(t.id);
   remember();
+  ext.mark(`t:${t.id}`);
   show(t, r).then(() => {
     showing = false;
     setTimeout(pump, 400);

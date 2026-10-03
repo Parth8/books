@@ -813,6 +813,95 @@ await run("first launch with accounts: after the name, it explains keeping books
   }
 }, { raw: true });
 
+await run("a book you add shows up on top straight away", async (page) => {
+  await starter(page);
+  await goTo(page, "add");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("#panel-add[aria-hidden=false]");
+  await page.fill("#q", "dune");
+  await page.waitForSelector(".row:not(.have)");
+  await page.locator(".row:not(.have)").first().click();
+  await page.waitForFunction(() => globalThis.__shelfie.state.books.some((b) => b.title === "Dune Messiah"));
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => {
+    const id = globalThis.__shelfie.top;
+    return globalThis.__shelfie.state.books.find((b) => b.id === id)?.title === "Dune Messiah";
+  });
+  assert.match(await page.locator(".stamp.top:not(.leaving) .cap b").textContent(), /DUNE MESSIAH|Dune Messiah/i);
+});
+
+await run("each pass has a Find on Amazon button: by ISBN when there is one, else title and author", async (page) => {
+  await starter(page);
+  const href = await page.locator(".stamp.top:not(.leaving) .tk-buy").getAttribute("href");
+  assert.match(href, /^https:\/\/www\.amazon\.in\/s\?k=Dune%20Frank%20Herbert$/);
+  assert.equal(await page.locator(".stamp.top:not(.leaving) .tk-buy").getAttribute("rel"), "noopener noreferrer");
+  // Want books also get a GET IT key.
+  await page.focus(".tape-item[data-shelf=reading]");
+  await page.keyboard.press("ArrowRight"); // reading → want
+  await page.waitForFunction(() => globalThis.__shelfie.shelf === "want");
+  await settle(page, 600);
+  assert.ok(await page.isVisible('.dock .key[aria-label^="Find "]'));
+});
+
+await run("pick an animal for your profile; it shows on the avatar and stays", async (page) => {
+  await page.click("#me");
+  await page.click(".ava-arrow.next");
+  await page.waitForFunction(() => globalThis.__shelfie.state.avatar === "llama");
+  assert.equal(await page.textContent("#me-face"), "🦙");
+  await page.reload();
+  await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+  assert.equal(await page.textContent("#me-face"), "🦙");
+});
+
+await run("motion controls: flick for books, twist for shelves, flick up to add, tilt to lean", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "no-preference", hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  try {
+    await setup(page);
+    await page.addInitScript(() => localStorage.setItem("shelfie.fx", JSON.stringify({ visitors: false, motion: true })));
+    await page.goto(SITE);
+    await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+    await starter(page); // (the first tap is what lets an iPhone start the sensors)
+    const motion = (acc, rot = {}) => page.evaluate(([acc, rot]) => dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: 0, z: 0, ...acc }, rotationRate: { alpha: 0, beta: 0, gamma: 0, ...rot }, interval: 16 })), [acc, rot]);
+    const first = (await app(page)).top;
+    await motion({ x: 16 });
+    await page.waitForFunction((t) => globalThis.__shelfie.top !== t, first);
+    await page.waitForTimeout(800);
+    await motion({ x: -16 });
+    await page.waitForFunction((t) => globalThis.__shelfie.top === t, first);
+    await page.waitForTimeout(800);
+    await motion({ x: 3 }); // a little nudge is ignored
+    await page.waitForTimeout(300);
+    assert.equal((await app(page)).top, first);
+    await motion({}, { alpha: -400 });
+    await page.waitForFunction(() => globalThis.__shelfie.shelf === "want");
+    await page.waitForTimeout(800);
+    await motion({ y: 15 });
+    await page.waitForSelector("#panel-add[aria-hidden=false]");
+    // No gestures while a panel is open.
+    await page.waitForTimeout(800);
+    await motion({}, { alpha: -400 });
+    await page.waitForTimeout(400);
+    assert.equal((await app(page)).shelf, "want");
+    await page.keyboard.press("Escape");
+    for (let i = 0; i < 25; i++) await page.evaluate((i) => dispatchEvent(new DeviceOrientationEvent("deviceorientation", { alpha: 0, beta: i ? 60 : 45, gamma: i ? 18 : 0 })), i);
+    await page.waitForFunction(() => /deg$/.test(document.querySelector("#deck").style.rotate));
+  } finally {
+    await ctx.close();
+  }
+}, { raw: true });
+
+await run("guide: hints stop after a few opens, and tips never come back", async (page) => {
+  await starter(page);
+  for (let i = 0; i < 3; i++) {
+    await page.reload();
+    await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+  }
+  await page.waitForTimeout(1500);
+  assert.equal(await page.locator("#hint-slot .hint.on").count(), 0, "no hint chip from the fourth open");
+  assert.equal(await page.locator(".tip").count(), 0);
+});
+
 await run(
   "full motion: starter, swipe, scrub, lift, posters, panels",
   async (page) => {

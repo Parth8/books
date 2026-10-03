@@ -8,6 +8,7 @@
  *   GET /api/health
  *   GET /api/search?q=dune
  *   GET /api/cover?isbn=9780441013593   a sharp Google cover for an ISBN, if Google has one
+ *   GET /api/cover?t=Dune&a=Frank%20Herbert   the same, found by title and author
  *   GET /api/sync/<id>     a synced copy of someone's shelves (end-to-end encrypted)
  *   PUT /api/sync/<id>     store a new copy; { iv, ct, base } where base is the revision it
  *                          was built on (a mismatch answers 409 with the current copy)
@@ -21,6 +22,7 @@
  *   POST /api/auth/recover/begin    { login }                      → { rwrapped }
  *   POST /api/auth/recover          { login, rauth, salt, kdf, auth, wrapped } → { token }
  *   POST /api/auth/recovery         { auth, rauth, rwrapped } (Bearer) → { ok }   (a new recovery code)
+ *   POST /api/auth/rename           { auth, login }     (Bearer)   → { ok }   (a new username or email)
  *   POST /api/auth/delete           { auth }            (Bearer)   → { ok }
  *   GET  /api/vault                                     (Bearer)   → { rev, iv, ct } or { rev: 0 }
  *   PUT  /api/vault                 { iv, ct, base, op } (Bearer)  → { rev } or 409 with the current copy
@@ -95,7 +97,7 @@ export default {
     try {
       const path = url.pathname;
       const syncId = /^\/api\/sync\/([0-9a-f]{64})$/.exec(path)?.[1];
-      const authRoute = /^\/api\/auth\/(prelogin|signup|login|logout|password|recovery|recover\/begin|recover|delete)$/.exec(path)?.[1];
+      const authRoute = /^\/api\/auth\/(prelogin|signup|login|logout|password|recovery|rename|recover\/begin|recover|delete)$/.exec(path)?.[1];
       const allowed_ =
         request.method === "GET" ||
         (request.method === "PUT" && (syncId || path === "/api/vault")) ||
@@ -293,6 +295,7 @@ const LIMITS = {
   recover: [["ip", 10, 3600], ["login", 5, 3600]],
   password: [["user", 10, 3600]],
   recovery: [["user", 10, 3600]],
+  rename: [["user", 5, 3600]],
   delete: [["user", 5, 3600]],
 };
 
@@ -602,6 +605,30 @@ async function accountRoute(name, request, env, ctx) {
     return [200, { ok: true }];
   }
 
+  if (name === "rename") {
+    // A new username (or email). The account moves to the new name's key, with its backup and
+    // sessions, in one all-or-nothing batch. The password doesn't change (it never used the name).
+    await limits(env, "rename", request, { user: uid }, now);
+    const login = cleanLogin(body.login);
+    const user = await getUser(env, uid);
+    await checkAuth(env, user, b64Field(body.auth, 32, "auth"), "auth", now);
+    const next = await userId(env, login);
+    if (next === uid) return [200, { ok: true }];
+    if (await getUser(env, next)) throw new ApiError(409, "taken", "That username is taken. Try another.");
+    try {
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO users (id, salt, kdf, auth, wrapped, rauth, rwrapped, created, fails, locked) SELECT ?, salt, kdf, auth, wrapped, rauth, rwrapped, created, 0, 0 FROM users WHERE id = ?").bind(next, uid),
+        env.DB.prepare("UPDATE vaults SET uid = ? WHERE uid = ?").bind(next, uid),
+        env.DB.prepare("UPDATE sessions SET uid = ? WHERE uid = ?").bind(next, uid),
+        env.DB.prepare("DELETE FROM users WHERE id = ?").bind(uid),
+      ]);
+    } catch {
+      // Someone took the name a moment ago (the insert hit the existing row): nothing changed.
+      throw new ApiError(409, "taken", "That username is taken. Try another.");
+    }
+    return [200, { ok: true }];
+  }
+
   if (name === "delete") {
     await limits(env, "delete", request, { user: uid }, now);
     const user = await getUser(env, uid);
@@ -667,20 +694,47 @@ export function cleanIsbn(raw) {
 
 const googleCover = (id) => `https://books.google.com/books/content?id=${id}&printsec=frontcover&img=1&zoom=1&fife=w720-h1080&source=gbs_api`;
 
-/** The first Google volume for an ISBN that has a cover. Answers (found or not) are cached at the edge. */
+/** Title and author for a cover lookup: plain words, short. */
+const coverWords = (v, n) => String(v || "").normalize("NFKC").replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim().slice(0, n);
+const looseTitle = (v) => coverWords(v, 80).toLowerCase().replace(/^(the|a|an) /, "");
+
+/**
+ * The first Google volume (by ISBN, or by title and author) that has a cover. Answers, found or
+ * not, are cached at the edge, so each book is looked up once for everyone.
+ */
 async function coverRoute(url, env, ctx) {
-  const isbn = cleanIsbn(url.searchParams.get("isbn"));
-  const name = `cover/${isbn}`;
+  let q;
+  let name;
+  let want = null;
+  if (url.searchParams.has("isbn")) {
+    const isbn = cleanIsbn(url.searchParams.get("isbn"));
+    q = `isbn:${isbn}`;
+    name = `cover/${isbn}`;
+  } else {
+    const t = coverWords(url.searchParams.get("t"), 80);
+    const a = coverWords(url.searchParams.get("a"), 60);
+    if (t.length < 2) throw new ApiError(400, "bad_query", "Give an ISBN, or a title (and author).");
+    q = `intitle:${t}${a ? ` inauthor:${a}` : ""}`;
+    name = `cover/t/${t.toLowerCase()}|${a.toLowerCase()}`;
+    want = looseTitle(t);
+  }
   const hit = await caches.default.match(cacheKey(name));
   if (hit) return hit.json();
   let img = null;
   if (env.GOOGLE_BOOKS_KEY) {
-    const params = new URLSearchParams({ q: `isbn:${isbn}`, maxResults: "3", fields: "items(id,volumeInfo/imageLinks/thumbnail)", key: env.GOOGLE_BOOKS_KEY });
+    const params = new URLSearchParams({ q, maxResults: "5", printType: "books", fields: "items(id,volumeInfo(title,imageLinks/thumbnail))", key: env.GOOGLE_BOOKS_KEY });
     const href = `${GOOGLE}?${params}`;
     if (new URL(href).hostname !== "www.googleapis.com") throw new Error("refusing to send the key elsewhere");
     try {
       const data = await getJson(href, { headers: { Accept: "application/json" } });
-      const item = (Array.isArray(data?.items) ? data.items : []).find((it) => typeof it?.id === "string" && /^[\w-]{4,20}$/.test(it.id) && it.volumeInfo?.imageLinks?.thumbnail);
+      const item = (Array.isArray(data?.items) ? data.items : []).find(
+        (it) =>
+          typeof it?.id === "string" &&
+          /^[\w-]{4,20}$/.test(it.id) &&
+          it.volumeInfo?.imageLinks?.thumbnail &&
+          // By title: only the same title (a subtitle after ":" or "(" is fine), no lookalikes.
+          (!want || looseTitle(String(it.volumeInfo.title || "").split(/[:(]/)[0]) === want),
+      );
       img = item ? googleCover(item.id) : null;
     } catch (err) {
       log("warn", "cover lookup failed", String(err && err.message));

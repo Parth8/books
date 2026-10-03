@@ -255,3 +255,15 @@ test("covers by ISBN: none found is a normal answer, and no key means no lookup"
   assert.deepEqual((await call("/api/cover?isbn=0441013598", { extra: { GOOGLE_BOOKS_KEY: "" } })).body, { img: null });
   assert.equal(calls.length, 0);
 });
+
+test("covers by title and author: only a matching title counts", async () => {
+  upstream.set("www.googleapis.com", () => new Response(JSON.stringify({ items: [{ id: "wrongbook1", volumeInfo: { title: "Dune Messiah Coloring Book", imageLinks: { thumbnail: "x" } } }, { id: "B1hSG45JCX4C", volumeInfo: { title: "Dune", imageLinks: { thumbnail: "x" } } }] })));
+  const r = await call("/api/cover?t=Dune&a=Frank%20Herbert");
+  assert.equal(r.status, 200);
+  assert.match(r.body.img, /id=B1hSG45JCX4C/, "not the coloring book");
+  const u = new URL(calls[0]);
+  assert.equal(u.searchParams.get("q"), "intitle:Dune inauthor:Frank Herbert");
+  upstream.set("www.googleapis.com", () => new Response(JSON.stringify({ items: [{ id: "otherbook1", volumeInfo: { title: "Something Else", imageLinks: { thumbnail: "x" } } }] })));
+  assert.deepEqual((await call("/api/cover?t=The%20Hobbit&a=Tolkien")).body, { img: null });
+  assert.equal((await call("/api/cover?t=x")).status, 400);
+});

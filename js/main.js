@@ -9,7 +9,7 @@
 
 import { h, $, buzz, clamp, fmt, prefersReducedMotion } from "./util.js";
 import * as S from "./store.js";
-import { bookStamp, addStamp, feelOf, liquidOf } from "./stamp.js";
+import { bookStamp, addStamp, feelOf, liquidOf, amazonUrl } from "./stamp.js";
 import { createDeck } from "./deck.js";
 import { createLiquid } from "./liquid.js";
 import { createKnob } from "./knob.js";
@@ -23,10 +23,12 @@ import { createSync, prettyCode } from "./sync.js";
 import { createAccount, passwordProblem, strength, cleanLogin } from "./account.js";
 import { startTutorial } from "./tutorial.js";
 import { popup } from "./modal.js";
-import { tip, holdTipsWhile, resetTips } from "./tips.js";
-import { createCritters } from "./critters.js";
+import { tip, holdTipsWhile, resetTips, linkTips } from "./tips.js";
+import { createCritters, CRITTERS } from "./critters.js";
 import { canInstall, showInstall, shouldOffer, markOffered, chaiCard } from "./home.js";
 import { createLever } from "./lever.js";
+import { edisonString, startStutters } from "./lights.js";
+import { createGyro, motionSupported, askMotion } from "./gyro.js";
 import * as Q from "./quips.js";
 import { fromGoodreads } from "./goodreads.js";
 import { poke } from "./eggs.js";
@@ -35,7 +37,31 @@ import { Spring, Velocity, rubber, project } from "./physics.js";
 
 let state = S.load(globalThis.localStorage);
 const island = createIsland();
-const hints = createHints($("#hint-slot"));
+/** Note that a tip or hint was seen: in your data, so every device and browser knows. */
+function markGuide(key) {
+  const next = S.markSeen(state, key);
+  if (next === state) return;
+  state = S.save(globalThis.localStorage, next);
+  backupSoon();
+}
+const opensSoFar = (() => {
+  try {
+    return Number(localStorage.getItem("shelfie.visits")) || 0;
+  } catch {
+    return 0;
+  }
+})();
+const hints = createHints($("#hint-slot"), { seen: (k) => S.seen(state, k), mark: markGuide, active: () => opensSoFar < 3 });
+// Tips only on your first visit, as each part appears (or again on request from How to use).
+// The visit count is read before this open is counted, so the first visit is 0.
+const firstVisit = (() => {
+  try {
+    return !opensSoFar && !state.toured;
+  } catch {
+    return true;
+  }
+})();
+linkTips({ seen: (k) => S.seen(state, k), mark: markGuide, allowed: () => firstVisit });
 
 const SHELF = {
   reading: { label: "READING", tone: "#2b3bff", ink: "#ffffff", rgb: [43, 59, 255] },
@@ -67,7 +93,7 @@ const panelsUp = new Map(); // how far each panel is open (see panelProgress)
 let syncRef = null; // the sync-code engine, once it exists (the HUD draws before it does)
 function backupSoon() {
   if (account?.on) account.soon();
-  else sync.soon();
+  else syncRef?.soon(); // (syncRef: this can run while the app is still starting up)
 }
 
 function commit(result, at, { keepStats = false } = {}) {
@@ -371,11 +397,12 @@ function patchStamp(el, b) {
   el.setAttribute("aria-label", `${b.title}${b.author ? ` by ${b.author}` : ""}, page ${b.page} of ${b.pages}`);
 }
 
-function renderShelf({ deal = 0 } = {}) {
+/** `keep`: the book to show on top (a book you just added), instead of whatever was there. */
+function renderShelf({ deal = 0, keep = null } = {}) {
   const books = S.shelf(state, shelf);
   const items = books.map((b) => ({ id: b.id, key: keyOf(b), make: makeStamp(b.id) }));
   items.push({ id: "add", key: "add", make: () => addStamp() });
-  deck.set(items, { deal });
+  deck.set(items, { deal, keep: keep && books.some((b) => b.id === keep) ? keep : null });
   // Page counts change in place, so the stamp (and its liquid) stays put.
   for (const b of books) {
     const el = deck.item(b.id)?.el;
@@ -775,12 +802,13 @@ function renderDock() {
         screenEl,
         h(
           "div",
-          { class: "keys two" },
+          { class: "keys three" },
           (() => {
             const k = key("START", "k-blue wide", (e) => start(b.id, e.currentTarget), { sub: "READING" });
             k.querySelector("b").append(h("i", { class: "play-tri", "aria-hidden": "true" }));
             return k;
           })(),
+          key("🛒", "k-pink", () => window.open(amazonUrl(b), "_blank", "noopener,noreferrer"), { aria: `Find ${b.title} on Amazon`, sub: "GET IT" }),
           key("🎲", "k-yellow", () => shuffle(), { aria: "Shuffle the pile", sub: "SHUFFLE" }),
         ),
       ),
@@ -935,10 +963,10 @@ function refreshMe() {
   $("#me-safe")?.replaceWith(safeSection());
   if (!document.querySelector(".lever.held")) $("#me-levers")?.replaceWith(leversSection());
   $("#me-title").textContent = state.name ? state.name.toUpperCase().slice(0, 14) : "YOU";
-  const who = $(".me-id b");
+  const who = $(".me-name");
   if (who) who.textContent = state.name || "Anonymous reader";
-  const face = $(".me-avatar span");
-  if (face) face.textContent = faceOf();
+  const handle = $("#me-handle");
+  if (handle) handle.textContent = handleText();
 }
 // One tap opens your stats; keep tapping and something else happens.
 let lcdTimer = 0;
@@ -1211,7 +1239,8 @@ function wipeDevice({ reset = false, keepLink = false } = {}) {
     const keep = new Set(["shelfie.fx", TOUR, ...(keepLink ? ["shelfie.sync"] : [])]);
     for (const k of Object.keys(localStorage)) if (k === S.KEY || k.startsWith(`${S.KEY}.`) || (k.startsWith("shelfie.") && !keep.has(k))) localStorage.removeItem(k);
     // Reset everywhere: the reset state already went up; keep exactly that one.
-    const next = keepLink ? state : { ...(reset ? S.reset() : S.empty()), toured: true };
+    // You still know your way around: the tour and tips you've seen stay seen.
+    const next = keepLink ? state : { ...(reset ? S.reset() : S.empty()), toured: true, guide: state.guide };
     localStorage.setItem(S.KEY, JSON.stringify(next));
     sessionStorage.setItem("shelfie.fresh", "1");
   } catch {}
@@ -1533,6 +1562,7 @@ function accountTile() {
         "div",
         { class: "acct-more" },
         h("button", { type: "button", class: "link-btn", text: "NEW RECOVERY CODE", on: { click: () => newRecoveryFlow() } }),
+        h("button", { type: "button", class: "link-btn", text: "CHANGE USERNAME", on: { click: () => renameFlow() } }),
         h("button", { type: "button", class: "link-btn", text: "LOG OUT EVERYWHERE", on: { click: () => logoutFlow({ all: true }) } }),
       ),
     );
@@ -1785,6 +1815,24 @@ function switchRow(icon, title, text, pref) {
   return b;
 }
 
+/** Motion controls: switching on asks permission (in the tap), and shows the moves. */
+function motionRow() {
+  const sw = h("span", { class: `switch${fx.motion ? " on" : ""}`, "aria-hidden": "true" }, h("i"));
+  const b = h("button", { type: "button", class: "me-row", role: "switch", "aria-checked": String(fx.motion), "aria-label": "MOTION CONTROLS" }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: "📳" }), h("span", { class: "me-row-text" }, h("b", { text: "MOTION CONTROLS" }), h("small", { text: "Flick for the next book, twist for the next shelf, flick up to add. Tilt to play with the light." })), sw);
+  b.addEventListener("click", () => {
+    if (fx.motion) {
+      fx.set("motion", false);
+      gyro.stop();
+      sw.classList.remove("on");
+      b.setAttribute("aria-checked", "false");
+      feel("click", "select");
+      return;
+    }
+    motionInvite({ fromSettings: true });
+  });
+  return b;
+}
+
 /** Where your books are, in two plain lines. */
 function safeStrip() {
   const n = state.books.length;
@@ -1805,11 +1853,19 @@ function renderMe() {
   const restore = h("input", { type: "file", accept: "application/json,.json", hidden: true, on: { change: importData } });
   fill(
     $("#me-body"),
+    avatarPicker(),
     h(
       "div",
-      { class: "me-head" },
-      h("button", { type: "button", class: "me-avatar", "aria-label": "Change your name", on: { click: () => askName({ edit: true }).then(refreshMe) } }, h("span", { text: faceOf() })),
-      h("div", { class: "me-id" }, h("b", { text: state.name || "Anonymous reader" }), h("small", { text: `LV${String(lp.level).padStart(2, "0")} · ${lp.title.toUpperCase()}` }), h("button", { type: "button", class: "link-btn", text: state.name ? "CHANGE NAME" : "ADD YOUR NAME", on: { click: () => askName({ edit: true }).then(refreshMe) } })),
+      { class: "me-id" },
+      h("b", { class: "me-name", text: state.name || "Anonymous reader" }),
+      h("span", { class: "me-handle", id: "me-handle" }, handleText()),
+      h("small", { text: `LV${String(lp.level).padStart(2, "0")} · ${lp.title.toUpperCase()}` }),
+      h(
+        "div",
+        { class: "me-id-links" },
+        h("button", { type: "button", class: "link-btn", text: state.name ? "CHANGE NAME" : "ADD YOUR NAME", on: { click: () => askName({ edit: true }).then(refreshMe) } }),
+        account?.on ? h("button", { type: "button", class: "link-btn", text: "CHANGE USERNAME", on: { click: () => renameFlow() } }) : null,
+      ),
     ),
 
     h("h3", { class: "p-h", text: "YOUR BOOKS ARE SAFE" }),
@@ -1834,6 +1890,7 @@ function renderMe() {
       switchRow("🔊", "SOUND", "Clicks, pops and fanfares. Follows the iPhone silent switch.", "sound"),
       switchRow("📳", "HAPTICS", "Little taps you can feel.", "haptics"),
       switchRow("🦙", "VISITORS", "Animals that wander by now and then.", "visitors"),
+      motionSupported() ? motionRow() : null,
       meRow("?", "HOW TO USE", "Replay the tour, or bring the explainer pop-ups back.", () => {
         mePanel.close();
         setTimeout(helpFlow, 320);
@@ -1867,10 +1924,103 @@ function leversSection() {
   );
 }
 
-/** The face on the avatar button: your initial, or a stand-in. */
+/** The face on the avatar button: your animal, or your initial, or a stand-in. */
 function faceOf() {
+  const animal = CRITTERS.find((c) => c.id === state.avatar);
+  if (animal) return animal.e;
   const c = [...(state.name || "")][0];
   return c ? c.toUpperCase() : "👤";
+}
+
+/** "@username" when you're logged in. */
+function handleText() {
+  return account?.on ? `@${account.user}` : "NOT LOGGED IN";
+}
+
+/**
+ * Your profile animal: a carousel of the visitors. Slide through them (or use the arrows);
+ * whichever lands in the middle says hello in its own voice, and becomes you.
+ */
+function avatarPicker() {
+  const options = [{ id: "", e: [...(state.name || "")][0]?.toUpperCase() || "👤", name: state.name ? "YOUR INITIAL" : "NO ANIMAL" }, ...CRITTERS.map((c) => ({ ...c, name: c.id.toUpperCase() }))];
+  const label = h("small", { class: "ava-name", "aria-live": "polite" });
+  const items = options.map((o, i) => h("button", { type: "button", class: `ava${o.id === state.avatar ? " on" : ""}`, "aria-label": `Be the ${o.id || "plain"} avatar`, "data-i": String(i) }, h("span", { text: o.e })));
+  const strip = h("div", { class: "ava-strip", role: "listbox", "aria-label": "Choose your animal" }, items);
+  let current = Math.max(0, options.findIndex((o) => o.id === (state.avatar || "")));
+  label.textContent = options[current].name;
+
+  // While sliding, the one in the middle grows (just a scale on a dozen small items).
+  const lens = () => {
+    const mid = strip.scrollLeft + strip.clientWidth / 2;
+    for (const it of items) {
+      const d = Math.min(1, Math.abs(it.offsetLeft + it.offsetWidth / 2 - mid) / 140);
+      it.style.transform = `scale(${(1.25 - d * 0.55).toFixed(3)})`;
+      it.style.opacity = String((1 - d * 0.55).toFixed(2));
+    }
+  };
+  const nearest = () => {
+    const mid = strip.scrollLeft + strip.clientWidth / 2;
+    let best = 0;
+    items.forEach((it, i) => {
+      if (Math.abs(it.offsetLeft + it.offsetWidth / 2 - mid) < Math.abs(items[best].offsetLeft + items[best].offsetWidth / 2 - mid)) best = i;
+    });
+    return best;
+  };
+  const choose = (i) => {
+    if (i === current) return;
+    current = i;
+    const o = options[i];
+    label.textContent = o.name;
+    items.forEach((it, j) => it.classList.toggle("on", j === i));
+    commit(S.setAvatar(state, o.id), null, { keepStats: true });
+    renderFace();
+    feel(o.sound || "pop", "select");
+    if (!prefersReducedMotion()) items[i].firstChild.animate([{ transform: "none" }, { transform: "translateY(-14px) rotate(-8deg)" }, { transform: "none" }], { duration: 520, easing: "cubic-bezier(.3,1.6,.5,1)" });
+  };
+  const go = (i, smooth = true) => {
+    const it = items[Math.max(0, Math.min(items.length - 1, i))];
+    strip.scrollTo({ left: it.offsetLeft + it.offsetWidth / 2 - strip.clientWidth / 2, behavior: smooth && !prefersReducedMotion() ? "smooth" : "auto" });
+  };
+  let settleTimer = 0;
+  strip.addEventListener("scroll", () => {
+    requestAnimationFrame(lens);
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => choose(nearest()), 140);
+  }, { passive: true });
+  items.forEach((it, i) => it.addEventListener("click", () => (i === current ? feel(options[i].sound || "pop", "select") : go(i))));
+  strip.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") (e.preventDefault(), go(current + 1));
+    if (e.key === "ArrowLeft") (e.preventDefault(), go(current - 1));
+  });
+  // Start centred on your animal (once it's on the page).
+  requestAnimationFrame(() => {
+    go(current, false);
+    lens();
+  });
+  const arrow = (dir) => h("button", { type: "button", class: `ava-arrow ${dir < 0 ? "prev" : "next"}`, "aria-label": dir < 0 ? "Previous animal" : "Next animal", text: dir < 0 ? "‹" : "›", on: { click: () => go(current + dir) } });
+  return h("div", { class: "ava-picker" }, arrow(-1), strip, arrow(1), label);
+}
+
+async function renameFlow() {
+  const res = await popup({
+    tone: "cyan",
+    icon: "🏷️",
+    title: "NEW USERNAME",
+    text: `You log in as @${account.user}. Pick a new username (or use an email). Your books, backup and password stay the same.`,
+    fields: [
+      { name: "login", placeholder: "New username or email", autocomplete: "username", label: "New username or email", max: 254, inputmode: "email" },
+      { name: "password", type: "password", placeholder: "Password", autocomplete: "current-password", label: "Password", enter: "done" },
+    ],
+    actions: [
+      { id: "cancel", label: "CANCEL", cancel: true },
+      { id: "go", label: "CHANGE IT", primary: true, busy: "CHANGING…" },
+    ],
+    submit: (v) => account.rename(v.login, v.password),
+  });
+  if (res.id !== "go") return;
+  feel("levelup", "success");
+  island.say({ icon: "🏷️", title: `YOU'RE @${account.user.toUpperCase().slice(0, 16)}`, sub: "Log in with this from now on", tone: "lime" });
+  refreshMe();
 }
 function renderFace() {
   const f = faceOf();
@@ -1965,10 +2115,17 @@ const add = createPanel($("#panel-add"), {
   onClose: () => {
     feel("close", "light");
     if (!added.length) return;
-    const where = book(added[added.length - 1])?.shelf;
+    // Show what you just added: on top of its shelf, straight away.
+    const last = added[added.length - 1];
+    const where = book(last)?.shelf;
     added = [];
     if (where && where !== shelf) switchShelf(where);
-    else renderShelf();
+    else renderShelf({ keep: last });
+    setTimeout(() => {
+      feel("stamp", "success");
+      const el = deck.top?.el;
+      if (el && !prefersReducedMotion()) el.animate([{ transform: "translateY(-40px) scale(1.08) rotate(-4deg)", opacity: 0.4 }, { transform: "none", opacity: 1 }], { duration: 650, easing: "cubic-bezier(.22,1.3,.36,1)", composite: "add" });
+    }, 120);
   },
 });
 $("#panel-add [data-close]").addEventListener("click", () => add.close());
@@ -2028,7 +2185,7 @@ const LEVELS = [
 function row(r) {
   const seed = S.hash(`${r.title}|${r.author}`);
   const have = state.books.some((b) => (r.key && b.key === r.key) || (b.title === r.title && b.author === r.author));
-  const thumb = h("div", { class: "thumb" }, bookStamp({ ...r, id: "x", seed, shelf: "want", pages: r.pages || 300, page: 0 }).querySelector(".pic"));
+  const thumb = h("div", { class: "thumb" }, bookStamp({ ...r, id: "x", seed, shelf: "want", pages: r.pages || 300, page: 0, noHd: true }).querySelector(".pic"));
   const label = h("b", { class: "row-label", text: "WANT" });
   const slab = h("div", { class: "row-under", "aria-hidden": "true" }, label);
   const face = h(
@@ -2241,6 +2398,8 @@ function tutorialDone(finished) {
   } catch {}
   const first = !state.toured;
   if (first) state = S.save(globalThis.localStorage, { ...state, toured: true, seen: true });
+  // The tour had you practise swiping and turning pages: no need to hint at them again.
+  if (finished) ["swipe", "scrub"].forEach((k) => hints.learn(k));
   backupSoon();
   if (first) setTimeout(onboard, finished ? 900 : 300);
 }
@@ -2442,6 +2601,132 @@ const critters = createCritters({
 if (!hints.has("stats")) setTimeout(() => !stats.isOpen && stats.peek(), 2600);
 
 prerenderStats();
+
+/* ---------------- motion controls ---------------- */
+
+let cardWidth = 0;
+const stageBg = $(".stage-bg");
+/** The tilt of the phone, -1..1 each way: the pile leans, the room shifts, the bulbs swing. */
+function applyTilt(x, y) {
+  const mag = Math.hypot(x, y);
+  // The pile turns about an axis at right angles to the tilt (individual property: it adds to
+  // the pile's own transform rather than replacing it).
+  deckEl.style.rotate = mag > 0.01 ? `${(-y).toFixed(3)} ${x.toFixed(3)} 0 ${(mag * 9).toFixed(2)}deg` : "";
+  stageBg.style.translate = `${(-x * 16).toFixed(1)}px ${(-y * 10).toFixed(1)}px`;
+  fairy.style.rotate = `${(x * 2.5).toFixed(2)}deg`;
+  for (const e of document.querySelectorAll(".edison")) e.style.setProperty("--swing", `${(-x * 12).toFixed(1)}deg`);
+  const top = deck.top?.el;
+  if (top) {
+    top.style.setProperty("--tx", x.toFixed(3));
+    top.style.setProperty("--ty", y.toFixed(3));
+  }
+  void cardWidth;
+}
+
+const motionUsed = new Set();
+/** A gesture made with the whole phone. */
+function motionGesture(name) {
+  const say = (icon, title) => {
+    // The first couple of times, say what just happened.
+    const n = (motionUsed.has(name) ? 1 : 0) + Number(localStorage.getItem(`shelfie.mo.${name}`) || 0);
+    motionUsed.add(name);
+    if (n < 2) {
+      island.say({ icon, title, tone: "lime", buzz: false });
+      try {
+        localStorage.setItem(`shelfie.mo.${name}`, String(n + 1));
+      } catch {}
+    }
+  };
+  if (name === "next" || name === "prev") {
+    const to = deck.index + (name === "next" ? 1 : -1);
+    if (to < 0 || to >= deck.ids().length) return feel("error", "warning");
+    feel("swoosh", "medium");
+    deck.go(to, { x: name === "next" ? -900 : 900 });
+    say("📳", name === "next" ? "FLICK! NEXT BOOK" : "FLICK! BACK ONE");
+  } else if (name === "shelfNext" || name === "shelfPrev") {
+    const k = ORDER.indexOf(shelf);
+    const to = ORDER[(k + (name === "shelfNext" ? 1 : ORDER.length - 1)) % ORDER.length];
+    switchShelf(to);
+    say("🎡", `TWIST! ${SHELF[to].label}`);
+  } else if (name === "add") {
+    feel("pop", "success");
+    openAdd();
+    say("🚀", "FLICK UP! ADD A BOOK");
+  }
+}
+
+const gyro = createGyro({
+  onTilt: applyTilt,
+  onGesture: motionGesture,
+  tilt: () => !prefersReducedMotion(),
+  canGesture: () =>
+    document.visibilityState === "visible" && !deck.dragging && !touring() && !popping() && !stats.isOpen && !add.isOpen && !imp.isOpen && !mePanel.isOpen && !posterUp && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || ""),
+});
+
+/** Turn motion on. Must run inside a tap (iPhone asks permission). */
+async function enableMotion() {
+  const ok = await askMotion();
+  if (!ok) throw new Error("Motion was blocked. On iPhone: Settings → Apps → Safari → Motion & Orientation Access, then try again.");
+  fx.set("motion", true);
+  gyro.start();
+  feel("levelup", "success");
+  return true;
+}
+
+/** The guide: three moves, drawn as little animated phones. */
+function motionGuide() {
+  const move = (cls, title, text) => h("div", { class: "mo-row" }, h("span", { class: `mo-phone ${cls}`, "aria-hidden": "true" }, h("i")), h("span", {}, h("b", { text: title }), h("small", { text })));
+  return h(
+    "div",
+    { class: "mo-guide" },
+    move("flick", "FLICK SIDEWAYS", "A quick flick right: next book. Left: back one."),
+    move("twist", "TWIST", "Turn it like a steering wheel: the next shelf (or the one before)."),
+    move("lift", "FLICK UP", "A quick lift: add a book."),
+    move("tilt", "TILT", "Just tilt: the pile leans, the lights swing, the cover catches the light."),
+  );
+}
+
+async function motionInvite({ fromSettings = false } = {}) {
+  try {
+    localStorage.setItem("shelfie.motionAsked", "1");
+  } catch {}
+  const res = await popup({
+    tone: "lime",
+    icon: "📳",
+    title: fromSettings ? "MOTION CONTROLS" : "NEW: MOVE YOUR PHONE",
+    text: "Shelfie can feel your phone move. Nothing about it is stored or sent anywhere.",
+    body: motionGuide(),
+    actions: [
+      { id: "later", label: fromSettings ? "CANCEL" : "NOT NOW", cancel: true },
+      { id: "on", label: "TURN IT ON", primary: true, busy: "ASKING…" },
+    ],
+    submit: () => enableMotion(),
+  });
+  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, twist, lift, tilt", tone: "lime" });
+  refreshMe();
+}
+
+if (motionSupported()) {
+  if (fx.motion) {
+    // iPhone needs the permission call inside a tap: the first touch of this visit starts it.
+    const kick = async () => {
+      removeEventListener("pointerdown", kick, true);
+      if (await askMotion()) gyro.start();
+    };
+    addEventListener("pointerdown", kick, true);
+  } else if (opensSoFar >= 1 && !localStorage.getItem("shelfie.motionAsked")) {
+    // Once, on a later visit: show it off.
+    setTimeout(() => {
+      if (touring() || popping() || stats.isOpen || add.isOpen || imp.isOpen || mePanel.isOpen || posterUp || document.querySelector(".tip")) return;
+      motionInvite();
+    }, 9000);
+  }
+}
+
+// Edison bulbs over the shelf title and every panel title.
+$(".hud").append(edisonString({ n: 7, sag: 14, seed: 11, cls: "over-title" }));
+document.querySelectorAll(".panel-grab").forEach((g, i) => g.append(edisonString({ n: 5, sag: 10, seed: 23 + i * 7 })));
+startStutters();
 
 // Exposed for the browser tests.
 globalThis.__shelfie = {

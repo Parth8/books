@@ -7,7 +7,7 @@
 // require it anyway).
 
 const KEY = "shelfie.fx";
-let prefs = { sound: true, haptics: true, visitors: true };
+let prefs = { sound: true, haptics: true, visitors: true, motion: false };
 try {
   prefs = { ...prefs, ...JSON.parse(localStorage.getItem(KEY) || "{}") };
 } catch {}
@@ -21,6 +21,9 @@ export const fx = {
   },
   get visitors() {
     return prefs.visitors !== false;
+  },
+  get motion() {
+    return prefs.motion === true;
   },
   set(k, v) {
     prefs[k] = !!v;
