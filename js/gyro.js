@@ -12,13 +12,11 @@
 // The axes. The web standard names rotation rates alpha (about the axis through the screen),
 // beta (side to side) and gamma (top to bottom). Safari on iPhone fills them in a different
 // order (alpha, beta, gamma = side to side, top to bottom, through the screen), which is why a
-// front-and-back flick used to change the shelf. So the rates are mapped per platform, and the
-// mapping is then checked against the phone's own orientation readings while you hold it: the
-// axis whose turning matches the change in tilt is the one it says it is. What's learnt is kept
-// on this device.
+// front-and-back flick used to change the shelf. So the rates are mapped per platform. (That
+// order is still being confirmed with recordings from a real iPhone; see tools/motion-lab.html.)
 //
 // iPhone asks permission, and only from a tap, so it's switched on from a button. Nothing about
-// how you move your phone is stored or sent anywhere (except that axis mapping, on this device).
+// how you move your phone is stored or sent anywhere.
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const AXES_KEY = "shelfie.motionAxes";
@@ -61,52 +59,6 @@ export const AXES = {
 export function toDevice(r, axes) {
   const get = ([name, sign]) => (+r?.[name] || 0) * sign;
   return { x: get(axes.x), y: get(axes.y), z: get(axes.z) };
-}
-
-/**
- * Learns which reported rate is which axis, from how the tilt changes. feed() it the turn reported
- * between two orientation readings (each rate summed over that time, in degrees) and how far beta
- * (tip, about x) and gamma (about y) moved; result() is a mapping once it's sure, else null.
- */
-export function axisLearner() {
-  const names = ["alpha", "beta", "gamma"];
-  const sx = { alpha: 0, beta: 0, gamma: 0 };
-  const sy = { alpha: 0, beta: 0, gamma: 0 };
-  let movedX = 0;
-  let movedY = 0;
-  const pick = (s) => {
-    const ranked = names.map((n) => [n, s[n]]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-    return Math.abs(ranked[0][1]) > 2.5 * Math.abs(ranked[1][1]) ? [ranked[0][0], Math.sign(ranked[0][1])] : null;
-  };
-  return {
-    feed(turn, dBeta, dGamma, beta) {
-      // Big jumps are the readings wrapping round (or a glitch), not a turn.
-      if (Math.abs(dBeta) > 30 || Math.abs(dGamma) > 30) return;
-      for (const n of names) sx[n] += (turn[n] || 0) * dBeta;
-      movedX += Math.abs(dBeta);
-      // gamma only means "about y" while the phone isn't near upright.
-      if (Math.abs(beta) < 55) {
-        for (const n of names) sy[n] += (turn[n] || 0) * dGamma;
-        movedY += Math.abs(dGamma);
-      }
-    },
-    result() {
-      if (movedX < 60) return null;
-      const x = pick(sx);
-      if (!x) return null;
-      const y = movedY >= 60 ? pick(sy) : null;
-      if (y && y[0] === x[0]) return null;
-      if (!y) {
-        // Only x is known yet: it tells us which order the platform uses; take y and z from that.
-        const base = x[0] === "alpha" ? AXES.apple : AXES.standard;
-        if (base.x[0] !== x[0]) return null;
-        return { x, y: base.y, z: base.z };
-      }
-      // z is whichever is left; its sign follows the platform (both orders are right-handed).
-      const z = names.find((n) => n !== x[0] && n !== y[0]);
-      return { x, y, z: [z, 1] };
-    },
-  };
 }
 
 /**
@@ -194,14 +146,6 @@ export function bounceOf(e) {
   return { v, h: Math.sqrt(Math.max(0, total * total - v * v)) };
 }
 
-function savedAxes() {
-  try {
-    const a = JSON.parse(localStorage.getItem(AXES_KEY) || "null");
-    if (a?.x?.length === 2 && a?.y?.length === 2 && a?.z?.length === 2) return a;
-  } catch {}
-  return null;
-}
-
 /**
  * onTilt(x, y): -1..1 each, smoothed, at most once a frame (x: left/right, y: towards/away).
  * onGesture(name): "next" | "prev" | "shelfNext" | "shelfPrev" | "add".
@@ -218,10 +162,19 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
   let raf = 0;
   let lastFrame = 0;
   let read = gestureReader();
-  let axes = savedAxes() || (isApple() ? AXES.apple : AXES.standard);
-  let learner = savedAxes() ? null : axisLearner();
-  let turn = { alpha: 0, beta: 0, gamma: 0 }; // reported turn since the last orientation reading
-  let lastO = null;
+  const axes = isApple() ? AXES.apple : AXES.standard;
+  let heard = -Infinity; // when the sensors last said something new
+  let lastSig = "";
+  // Real sensors always jitter a little; a reading that never changes (an emulator, or a browser
+  // filling in a blank) doesn't count as the sensors talking.
+  const hear = (sig) => {
+    if (sig !== lastSig && lastSig) heard = performance.now();
+    lastSig = sig;
+  };
+  // An axis guess saved by an earlier version: it could have been wrong, so it goes.
+  try {
+    localStorage.removeItem(AXES_KEY);
+  } catch {}
 
   // Smoothing runs per frame against the clock, not per sensor event, so it feels the same on a
   // 60 Hz and a 120 Hz screen and whatever rate the sensors happen to report at.
@@ -243,19 +196,7 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
 
   function orientation(e) {
     if (e.beta == null || e.gamma == null) return;
-    if (learner) {
-      if (lastO) learner.feed(turn, e.beta - lastO.beta, e.gamma - lastO.gamma, e.beta);
-      turn = { alpha: 0, beta: 0, gamma: 0 };
-      lastO = { beta: e.beta, gamma: e.gamma };
-      const learnt = learner.result();
-      if (learnt) {
-        axes = learnt;
-        learner = null;
-        try {
-          localStorage.setItem(AXES_KEY, JSON.stringify(learnt));
-        } catch {}
-      }
-    }
+    hear(`o${e.alpha},${e.beta},${e.gamma}`);
     if (!tilt()) return;
     const b = clamp(e.beta, -90, 90);
     const g = clamp(e.gamma, -90, 90);
@@ -270,11 +211,8 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
   function motion(e) {
     const now = e.timeStamp || performance.now();
     const r = e.rotationRate;
-    if (learner && r) {
-      const iv = e.interval > 0 && e.interval < 1 ? e.interval * 1000 : e.interval || 16;
-      const dt = clamp(iv, 1, 50) / 1000;
-      for (const n of ["alpha", "beta", "gamma"]) turn[n] += (+r[n] || 0) * dt;
-    }
+    const g = e.accelerationIncludingGravity;
+    if (r?.alpha != null || g?.x != null) hear(`m${r?.alpha},${r?.beta},${r?.gamma},${g?.x},${g?.y},${g?.z}`);
     if (!canGesture()) {
       read = gestureReader(); // forget anything half-done
       return;
@@ -286,6 +224,10 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
   return {
     get on() {
       return on;
+    },
+    /** Are readings actually arriving? (On iPhone they don't until permission is given.) */
+    get alive() {
+      return on && performance.now() - heard < 1500;
     },
     start() {
       if (on) return;

@@ -993,6 +993,48 @@ await run("motion controls: flick for books, twist for shelves, flick up to add,
   }
 }, { raw: true });
 
+await run("motion on, app relaunched: the first real tap wakes the sensors (iPhone's rule)", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "no-preference", hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  try {
+    await setup(page);
+    await page.addInitScript(() => {
+      localStorage.setItem("shelfie.fx", JSON.stringify({ visitors: false, motion: true }));
+      // Like an iPhone after a relaunch: readings only flow once permission is asked during a tap
+      // (finger-down doesn't count), and asking outside a tap is refused.
+      globalThis.__asks = [];
+      // Safari counts a touch as a tap only when the finger lifts: "touchend" or "click".
+      let during = "";
+      for (const type of ["pointerdown", "touchstart", "touchend", "click"])
+        addEventListener(type, () => ((during = type), setTimeout(() => (during = ""))), true);
+      const ask = async () => {
+        const ok = during === "touchend" || during === "click";
+        globalThis.__asks.push(ok ? "granted" : "denied");
+        if (ok && !globalThis.__flowing) {
+          globalThis.__flowing = true;
+          let i = 0;
+          setInterval(() => dispatchEvent(new DeviceOrientationEvent("deviceorientation", { alpha: 0, beta: i++ ? 60 : 45, gamma: i > 1 ? 18 : 0 })), 30);
+        }
+        return ok ? "granted" : "denied";
+      };
+      DeviceOrientationEvent.requestPermission = ask;
+      DeviceMotionEvent.requestPermission = ask;
+    });
+    await page.goto(SITE);
+    await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+    await page.waitForTimeout(1500); // nothing arrives on its own
+    assert.equal(await page.evaluate(() => !!globalThis.__flowing), false);
+    // A real tap anywhere: permission is asked inside it, readings flow, the pile leans.
+    await page.tap(".hud");
+    await page.waitForFunction(() => globalThis.__flowing === true, null, { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelector("#deck").style.rotate !== "", null, { timeout: 5000 });
+    const asks = await page.evaluate(() => globalThis.__asks);
+    assert.ok(asks.includes("granted") && !asks.includes("denied"), `asked only inside the tap: ${asks}`);
+  } finally {
+    await ctx.close();
+  }
+}, { raw: true });
+
 await run("guide: hints stop after a few opens, and tips never come back", async (page) => {
   await starter(page);
   for (let i = 0; i < 3; i++) {

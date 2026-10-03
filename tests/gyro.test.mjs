@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gestureReader, axisLearner, toDevice, AXES, bounceOf } from "../js/gyro.js";
+import { gestureReader, toDevice, AXES, bounceOf } from "../js/gyro.js";
 
 // A gesture as the gyroscope reports it: a quick turn one way, the swing back, then still.
 // (rate in degrees a second about the phone's own axes, one sample every 16 ms)
@@ -97,26 +97,6 @@ test("iPhone's order: a front-and-back flick reads as a flick, not a twist", () 
   const r = toDevice({ alpha: 400, beta: 0, gamma: 0 }, AXES.apple);
   assert.deepEqual(r, { x: 400, y: 0, z: 0 });
   assert.deepEqual(toDevice({ alpha: 400, beta: 0, gamma: 0 }, AXES.standard), { x: 0, y: 0, z: 400 });
-});
-
-test("the axes are learnt from how the tilt changes", () => {
-  // Simulate tipping the phone back and forth, then side to side, as each platform reports it.
-  for (const [platform, names] of [["standard", { x: "beta", y: "gamma" }], ["apple", { x: "alpha", y: "beta" }]]) {
-    const L = axisLearner();
-    for (let i = 0; i < 40; i++) {
-      const d = 4 * Math.sin(i / 3);
-      L.feed({ alpha: 0, beta: 0, gamma: 0, [names.x]: d + 0.2 }, d, 0.1, 30);
-    }
-    for (let i = 0; i < 40; i++) {
-      const d = 4 * Math.sin(i / 3);
-      L.feed({ alpha: 0.1, beta: 0, gamma: 0, [names.y]: d }, 0, d, 30);
-    }
-    const got = L.result();
-    assert.deepEqual(got.x, [names.x, 1], platform);
-    assert.deepEqual(got.y, [names.y, 1], platform);
-    assert.deepEqual(got.z[0], AXES[platform].z[0], platform);
-  }
-  assert.equal(axisLearner().result(), null, "not before it has seen enough");
 });
 
 test("a bounce is measured along gravity, however the phone is held", () => {

@@ -31,6 +31,10 @@ Options for the browser tests:
 
 CI runs the unit tests and the browser tests on every push.
 
+## Recording real motion
+
+`motion-lab.html` (not linked from the app, deleted before launch: see [launch.md](launch.md)) walks through each phone gesture and records what Safari's motion sensors report: orientation, rotation rate, acceleration with and without gravity, how often readings arrive, and the screen's rotation. Open `…/shelfie/motion-lab.html` on the phone, follow the steps, and share the file. Motion controls are tuned against these recordings, and they become test fixtures.
+
 ## Checking smoothness
 
 Correctness tests can't tell you whether something stutters. When changing anything that moves:

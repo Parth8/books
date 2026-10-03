@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Motion lab</title>
+<!--
+  A TEST PAGE, NOT PART OF THE APP. Nothing links here. It records what this phone's motion
+  sensors report while you make each gesture, so motion controls can be built on real numbers.
+  Nothing is sent anywhere: the recording only leaves the phone if you share it.
+  DELETE BEFORE LAUNCH (see docs/launch.md).
+-->
+<style>
+  :root { --bg: #0d0d0d; --ink: #f4f1e8; --dim: #8a877f; --lime: #e7ff3d; --pink: #ff6ad5; --line: #2a2a2a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 ui-monospace, Menlo, monospace; padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  h1 { font: 800 26px/1.1 system-ui, sans-serif; margin: 0 0 4px; }
+  p { margin: 6px 0; }
+  .dim { color: var(--dim); font-size: 13px; }
+  button { font: 700 16px system-ui, sans-serif; border: 0; border-radius: 14px; padding: 14px 18px; background: var(--lime); color: #111; width: 100%; margin-top: 10px; }
+  button.quiet { background: #222; color: var(--ink); }
+  button:disabled { opacity: 0.4; }
+  .card { border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-top: 14px; }
+  .live { display: grid; grid-template-columns: auto 1fr 1fr 1fr; gap: 2px 10px; font-size: 13px; }
+  .live b { color: var(--dim); font-weight: 400; }
+  .step-n { color: var(--pink); font-size: 13px; }
+  .step-t { font: 800 22px/1.2 system-ui, sans-serif; margin: 4px 0; }
+  .bar { height: 10px; background: #222; border-radius: 6px; overflow: hidden; margin-top: 10px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--lime); }
+  .big { font: 800 56px/1 system-ui, sans-serif; text-align: center; margin: 10px 0; color: var(--lime); }
+  .done { color: var(--lime); }
+  ol { padding-left: 20px; margin: 6px 0; }
+  li.ok { color: var(--lime); }
+</style>
+</head>
+<body>
+<h1>Motion lab</h1>
+<p class="dim">A test page for building Shelfie's motion controls. It records what your phone's sensors say while you make each move. Nothing is sent anywhere; at the end you share the file yourself.</p>
+
+<div class="card" id="start-card">
+  <p>Hold the phone the way you normally read in Shelfie, in portrait. Each step counts down, then records for a few seconds.</p>
+  <button id="start">START (ALLOW MOTION)</button>
+  <p class="dim" id="perm"></p>
+</div>
+
+<div class="card" id="live-card" hidden>
+  <div class="live">
+    <span></span><b>a / x</b><b>b / y</b><b>g / z</b>
+    <b>orient</b><span id="o-a">–</span><span id="o-b">–</span><span id="o-g">–</span>
+    <b>rot rate</b><span id="r-a">–</span><span id="r-b">–</span><span id="r-g">–</span>
+    <b>accel</b><span id="a-x">–</span><span id="a-y">–</span><span id="a-z">–</span>
+    <b>accel+g</b><span id="g-x">–</span><span id="g-y">–</span><span id="g-z">–</span>
+  </div>
+  <p class="dim" id="rate">–</p>
+</div>
+
+<div class="card" id="step-card" hidden>
+  <div class="step-n" id="step-n"></div>
+  <div class="step-t" id="step-t"></div>
+  <p id="step-d"></p>
+  <div class="big" id="count"></div>
+  <div class="bar"><i id="bar"></i></div>
+  <button id="go">RECORD THIS STEP</button>
+  <button class="quiet" id="redo" hidden>REDO THIS STEP</button>
+  <button class="quiet" id="next" hidden>NEXT STEP →</button>
+</div>
+
+<div class="card" id="list-card" hidden>
+  <p class="dim">Steps</p>
+  <ol id="list"></ol>
+</div>
+
+<div class="card" id="end-card" hidden>
+  <p class="done"><b>All done. Thank you!</b></p>
+  <p>Share the recording and attach it in the chat.</p>
+  <button id="share">SHARE THE RECORDING</button>
+  <button class="quiet" id="copy">COPY AS TEXT INSTEAD</button>
+  <p class="dim" id="size"></p>
+</div>
+
+<script>
+"use strict";
+const STEPS = [
+  { id: "still", title: "Hold still", text: "Hold the phone as you'd read. Keep it still.", secs: 5 },
+  { id: "tilt", title: "Tilt slowly", text: "Slowly tilt the phone left and right, then forward and back, like looking at something shiny.", secs: 10 },
+  { id: "flick-right", title: "Flick right ×3", text: "Three times: turn the phone quickly to face right (like turning a page), and back.", secs: 8 },
+  { id: "flick-left", title: "Flick left ×3", text: "Three times: turn the phone quickly to face left, and back.", secs: 8 },
+  { id: "twist-cw", title: "Twist clockwise ×3", text: "Three times: twist it like a steering wheel to the right (clockwise), and back.", secs: 8 },
+  { id: "twist-ccw", title: "Twist anticlockwise ×3", text: "Three times: twist it like a steering wheel to the left, and back.", secs: 8 },
+  { id: "tip-toward", title: "Tip towards you ×3", text: "Three times: flick the top edge quickly towards you, and back.", secs: 8 },
+  { id: "tip-away", title: "Tip away ×3", text: "Three times: flick the top edge quickly away from you, and back.", secs: 8 },
+  { id: "bounce", title: "Bounce ×3", text: "Three times: bounce the whole phone up and down, without turning it.", secs: 8 },
+  { id: "walk", title: "Walk", text: "Walk a few steps, holding the phone as you'd read.", secs: 8 },
+  { id: "down-up", title: "Put it down, pick it up", text: "Put the phone down on a table, then pick it up again and hold it to read.", secs: 10 },
+  { id: "scroll", title: "Normal use", text: "Use it normally: hold it, shift your grip, swipe the screen with your thumb.", secs: 10 },
+];
+const $ = (id) => document.getElementById(id);
+const r1 = (v) => (v == null || !isFinite(v) ? null : Math.round(v * 100) / 100);
+const out = {
+  v: 1,
+  ua: navigator.userAgent,
+  standalone: !!navigator.standalone || matchMedia("(display-mode: standalone)").matches,
+  screen: { w: screen.width, h: screen.height, dpr: devicePixelRatio, angle: screen.orientation?.angle ?? window.orientation ?? null },
+  started: new Date().toISOString(),
+  steps: [],
+};
+let rec = null; // the step being recorded: { id, t0, o: [], m: [] }
+let counts = { o: 0, m: 0, t: performance.now() };
+const last = {};
+
+function onOrient(e) {
+  counts.o++;
+  last.o = e;
+  if (rec) rec.o.push([r1(e.timeStamp - rec.t0), r1(e.alpha), r1(e.beta), r1(e.gamma)]);
+}
+function onMotion(e) {
+  counts.m++;
+  last.m = e;
+  if (!rec) return;
+  const r = e.rotationRate || {};
+  const a = e.acceleration || {};
+  const g = e.accelerationIncludingGravity || {};
+  rec.m.push([r1(e.timeStamp - rec.t0), r1(e.interval), r1(r.alpha), r1(r.beta), r1(r.gamma), r1(a.x), r1(a.y), r1(a.z), r1(g.x), r1(g.y), r1(g.z)]);
+}
+
+// The live numbers, a few times a second (cheap).
+setInterval(() => {
+  const o = last.o;
+  const m = last.m;
+  const set = (id, v) => ($(id).textContent = v == null ? "–" : Number(v).toFixed(1));
+  if (o) set("o-a", o.alpha), set("o-b", o.beta), set("o-g", o.gamma);
+  if (m) {
+    set("r-a", m.rotationRate?.alpha), set("r-b", m.rotationRate?.beta), set("r-g", m.rotationRate?.gamma);
+    set("a-x", m.acceleration?.x), set("a-y", m.acceleration?.y), set("a-z", m.acceleration?.z);
+    set("g-x", m.accelerationIncludingGravity?.x), set("g-y", m.accelerationIncludingGravity?.y), set("g-z", m.accelerationIncludingGravity?.z);
+  }
+  const dt = (performance.now() - counts.t) / 1000;
+  if (dt >= 1) {
+    $("rate").textContent = `${Math.round(counts.o / dt)} orientation and ${Math.round(counts.m / dt)} motion readings a second · screen angle ${screen.orientation?.angle ?? window.orientation ?? "?"}`;
+    counts = { o: 0, m: 0, t: performance.now() };
+  }
+}, 200);
+
+async function askPermission() {
+  try {
+    const asks = [window.DeviceOrientationEvent?.requestPermission, window.DeviceMotionEvent?.requestPermission].filter((f) => typeof f === "function");
+    if (!asks.length) return "granted (no prompt here)";
+    const answers = await Promise.all([DeviceOrientationEvent.requestPermission(), DeviceMotionEvent.requestPermission()]);
+    return answers.join(" / ");
+  } catch (err) {
+    return `error: ${err?.name || err}`;
+  }
+}
+
+$("start").addEventListener("click", async () => {
+  const answer = await askPermission();
+  out.permission = answer;
+  $("perm").textContent = `Permission: ${answer}`;
+  addEventListener("deviceorientation", onOrient);
+  addEventListener("devicemotion", onMotion);
+  if (!/granted/.test(answer)) return;
+  $("start-card").hidden = true;
+  $("live-card").hidden = $("step-card").hidden = $("list-card").hidden = false;
+  showStep();
+});
+
+let i = 0;
+function renderList() {
+  $("list").replaceChildren(...STEPS.map((s, k) => {
+    const li = document.createElement("li");
+    li.textContent = s.title;
+    if (out.steps.some((x) => x.id === s.id)) li.className = "ok";
+    if (k === i) li.style.fontWeight = "700";
+    return li;
+  }));
+}
+function showStep() {
+  const s = STEPS[i];
+  $("step-n").textContent = `STEP ${i + 1} OF ${STEPS.length}`;
+  $("step-t").textContent = s.title;
+  $("step-d").textContent = s.text;
+  $("count").textContent = "";
+  $("bar").style.width = "0";
+  $("go").hidden = false;
+  $("go").disabled = false;
+  $("redo").hidden = $("next").hidden = true;
+  renderList();
+}
+const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+async function record() {
+  const s = STEPS[i];
+  $("go").disabled = true;
+  $("redo").hidden = $("next").hidden = true;
+  for (let n = 3; n > 0; n--) {
+    $("count").textContent = n;
+    navigator.vibrate?.(20);
+    await wait(800);
+  }
+  $("count").textContent = "GO";
+  rec = { id: s.id, t0: performance.now(), o: [], m: [] };
+  const t0 = performance.now();
+  while (performance.now() - t0 < s.secs * 1000) {
+    $("bar").style.width = `${((performance.now() - t0) / (s.secs * 10)).toFixed(1)}%`;
+    await wait(100);
+  }
+  $("bar").style.width = "100%";
+  out.steps = out.steps.filter((x) => x.id !== s.id).concat([{ id: s.id, secs: s.secs, angle: screen.orientation?.angle ?? null, o: rec.o, m: rec.m }]);
+  rec = null;
+  $("count").textContent = "✓";
+  $("go").hidden = true;
+  $("redo").hidden = false;
+  $("next").hidden = false;
+  $("next").textContent = i === STEPS.length - 1 ? "FINISH →" : "NEXT STEP →";
+  renderList();
+}
+$("go").addEventListener("click", record);
+$("redo").addEventListener("click", record);
+$("next").addEventListener("click", () => {
+  if (i < STEPS.length - 1) {
+    i++;
+    return showStep();
+  }
+  $("step-card").hidden = true;
+  $("end-card").hidden = false;
+  const text = JSON.stringify(out);
+  $("size").textContent = `${(text.length / 1024).toFixed(0)} KB · ${out.steps.length} steps`;
+});
+
+const fileName = () => `shelfie-motion-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+$("share").addEventListener("click", async () => {
+  const text = JSON.stringify(out);
+  const file = new File([text], fileName(), { type: "application/json" });
+  try {
+    if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: "Shelfie motion recording" });
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+  }
+  // No share sheet: download it instead.
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  a.click();
+});
+$("copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(out));
+    $("copy").textContent = "COPIED ✓";
+  } catch {
+    $("copy").textContent = "COULDN'T COPY: USE SHARE";
+  }
+});
+</script>
+</body>
+</html>

@@ -126,14 +126,8 @@ export async function motionInvite({ fromSettings = false } = {}) {
 /** At start-up: pick up where you left off, or (once, on a later visit) offer motion controls. */
 export function startMotion() {
   if (!motionSupported()) return;
-  if (fx.motion) {
-    // iPhone needs the permission call inside a tap: the first touch of this visit starts it.
-    const kick = async () => {
-      removeEventListener("pointerdown", kick, true);
-      if (await askMotion()) gyro.start();
-    };
-    addEventListener("pointerdown", kick, true);
-  } else if (opensSoFar >= 1 && !localStorage.getItem("shelfie.motionAsked")) {
+  if (fx.motion) wakeMotion();
+  else if (opensSoFar >= 1 && !localStorage.getItem("shelfie.motionAsked")) {
     // Once, on a later visit: show it off.
     setTimeout(() => {
       if (touring() || popping() || stats.isOpen || add.isOpen || imp.isOpen || mePanel.isOpen || posterUp || document.querySelector(".tip")) return;
@@ -141,3 +135,38 @@ export function startMotion() {
     }, 9000);
   }
 }
+
+/**
+ * Motion is on: get the sensors talking. Where permission carried over (Android, or iPhone
+ * within the same session) readings just arrive. Otherwise iPhone needs the permission asked
+ * again, and only straight after a real tap: "click" or "touchend" (it ignores finger-down). So
+ * if nothing arrives, the next tap asks, and so does every tap after it until it works. The same
+ * check runs each time you come back to the app.
+ */
+let waking = false;
+function wakeMotion() {
+  if (!fx.motion) return;
+  gyro.start();
+  setTimeout(() => {
+    if (!fx.motion || gyro.alive || waking) return;
+    waking = true;
+    const ask = async () => {
+      if (gyro.alive || !fx.motion) return done();
+      if (await askMotion()) {
+        gyro.stop();
+        gyro.start(); // (fresh listeners, now that they're allowed)
+        done();
+      }
+    };
+    const done = () => {
+      waking = false;
+      removeEventListener("click", ask, true);
+      removeEventListener("touchend", ask, true);
+    };
+    addEventListener("click", ask, true);
+    addEventListener("touchend", ask, true);
+  }, 1000);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && fx.motion && motionSupported()) wakeMotion();
+});
