@@ -1,16 +1,27 @@
 // Motion controls. Shelfie can feel your phone move:
 //   - Tilt: the pile leans, the background shifts, the bulbs swing and the light on the cover
 //     slides, as if the whole thing were a little diorama in your hand.
-//   - Flick the phone right or left (turn it like a page and back): the next or previous book.
-//   - Twist it like a steering wheel: the next or previous shelf.
-//   - Flick the top towards you: add a book.
-// Gestures are read from the gyroscope (how fast the phone turns), not the accelerometer: turning
-// is clean and fast to measure, while a push shows up in the accelerometer mixed with gravity,
-// hand shake and the bounce back, which is why the old flicks were slow and sometimes backwards.
+//   - Turn the phone to face right or left and back (like turning a page): next or previous book.
+//   - Twist it like a steering wheel: the next or previous shelf, one per twist.
+//   - Bounce it up or down, or flick the top towards or away from you: add a book.
+//
+// Turns are read from the gyroscope (how fast the phone turns), which is clean and immediate. A
+// bounce is read from the accelerometer, measured along gravity so it works however you hold
+// the phone.
+//
+// The axes. The web standard names rotation rates alpha (about the axis through the screen),
+// beta (side to side) and gamma (top to bottom). Safari on iPhone fills them in a different
+// order (alpha, beta, gamma = side to side, top to bottom, through the screen), which is why a
+// front-and-back flick used to change the shelf. So the rates are mapped per platform, and the
+// mapping is then checked against the phone's own orientation readings while you hold it: the
+// axis whose turning matches the change in tilt is the one it says it is. What's learnt is kept
+// on this device.
+//
 // iPhone asks permission, and only from a tap, so it's switched on from a button. Nothing about
-// how you move your phone is stored or sent anywhere.
+// how you move your phone is stored or sent anywhere (except that axis mapping, on this device).
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const AXES_KEY = "shelfie.motionAxes";
 
 /** True where motion controls can work: a touch device with motion sensors. */
 export const motionSupported = () =>
@@ -34,72 +45,161 @@ export async function askMotion() {
   }
 }
 
+/** iPhone and iPad (iPadOS says it's a Mac, but a Mac has no touch screen). */
+export const isApple = (nav = globalThis.navigator) => /iPhone|iPad|iPod/.test(nav?.userAgent || "") || (/Macintosh/.test(nav?.userAgent || "") && nav?.maxTouchPoints > 1);
+
+/**
+ * How the three reported rates map onto the phone's own axes: for each of x (side to side), y (top
+ * to bottom) and z (through the screen), which reported name holds it, and with which sign.
+ */
+export const AXES = {
+  standard: { x: ["beta", 1], y: ["gamma", 1], z: ["alpha", 1] },
+  apple: { x: ["alpha", 1], y: ["beta", 1], z: ["gamma", 1] },
+};
+
+/** Reported rates → { x, y, z } in degrees a second, about the phone's own axes. */
+export function toDevice(r, axes) {
+  const get = ([name, sign]) => (+r?.[name] || 0) * sign;
+  return { x: get(axes.x), y: get(axes.y), z: get(axes.z) };
+}
+
+/**
+ * Learns which reported rate is which axis, from how the tilt changes. feed() it the turn reported
+ * between two orientation readings (each rate summed over that time, in degrees) and how far beta
+ * (tip, about x) and gamma (about y) moved; result() is a mapping once it's sure, else null.
+ */
+export function axisLearner() {
+  const names = ["alpha", "beta", "gamma"];
+  const sx = { alpha: 0, beta: 0, gamma: 0 };
+  const sy = { alpha: 0, beta: 0, gamma: 0 };
+  let movedX = 0;
+  let movedY = 0;
+  const pick = (s) => {
+    const ranked = names.map((n) => [n, s[n]]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+    return Math.abs(ranked[0][1]) > 2.5 * Math.abs(ranked[1][1]) ? [ranked[0][0], Math.sign(ranked[0][1])] : null;
+  };
+  return {
+    feed(turn, dBeta, dGamma, beta) {
+      // Big jumps are the readings wrapping round (or a glitch), not a turn.
+      if (Math.abs(dBeta) > 30 || Math.abs(dGamma) > 30) return;
+      for (const n of names) sx[n] += (turn[n] || 0) * dBeta;
+      movedX += Math.abs(dBeta);
+      // gamma only means "about y" while the phone isn't near upright.
+      if (Math.abs(beta) < 55) {
+        for (const n of names) sy[n] += (turn[n] || 0) * dGamma;
+        movedY += Math.abs(dGamma);
+      }
+    },
+    result() {
+      if (movedX < 60) return null;
+      const x = pick(sx);
+      if (!x) return null;
+      const y = movedY >= 60 ? pick(sy) : null;
+      if (y && y[0] === x[0]) return null;
+      if (!y) {
+        // Only x is known yet: it tells us which order the platform uses; take y and z from that.
+        const base = x[0] === "alpha" ? AXES.apple : AXES.standard;
+        if (base.x[0] !== x[0]) return null;
+        return { x, y: base.y, z: base.z };
+      }
+      // z is whichever is left; its sign follows the platform (both orders are right-handed).
+      const z = names.find((n) => n !== x[0] && n !== y[0]);
+      return { x, y, z: [z, 1] };
+    },
+  };
+}
+
 /**
  * The gesture reader, kept apart from the sensors so it can be tested with made-up numbers.
- * feed(t ms, rate {alpha, beta, gamma} in degrees a second, interval ms?) → a gesture name or null.
+ * feed(t ms, rate {x, y, z} in degrees a second about the phone's axes, interval ms?, bounce?)
+ * → a gesture name or null. bounce is { v, h }: acceleration along gravity and across it (m/s²).
  *
- * It adds up how far the phone has turned about each axis over the last fraction of a second.
- * A gesture is a quick turn of at least ~28° that is clearly about one axis (so a twist isn't
- * mistaken for a flick). Its first half gives the direction; then it waits for the phone to
- * settle, so the swing back to where you started never counts as a gesture the other way.
- *   alpha: about the axis through the screen (steering wheel)
- *   beta: about the side-to-side axis (top edge tips towards / away from you)
- *   gamma: about the up-down axis (turns the screen to face right / left)
+ * Turns: it adds up how far the phone turned about each axis over the last quarter second. A
+ * gesture is a quick turn of at least ~28° that is clearly about one axis. Its first half gives
+ * the direction. Bounces: a sharp push along gravity while the phone isn't turning much.
+ * After any gesture it waits until the phone has been still for a moment (and at least 0.8 s), so
+ * the swing back never counts, and a twist is one shelf, never several.
  */
-export function gestureReader({ window: win = 260, need = 28, settle = 70, quiet = 140 } = {}) {
+export function gestureReader({ window: win = 260, need = 28, settle = 45, quiet = 220, gap = 800, push = 7 } = {}) {
   let samples = [];
   let last = 0;
   let armed = true;
+  let firedAt = -1e9;
   let still = 0; // since when the phone has been calm (after a gesture)
-  return function feed(t, r, interval) {
-    const a = +r?.alpha || 0;
-    const b = +r?.beta || 0;
-    const g = +r?.gamma || 0;
+  return function feed(t, r, interval, bounce) {
+    const x = +r?.x || 0;
+    const y = +r?.y || 0;
+    const z = +r?.z || 0;
     // The sensor says how often it reports; trust that over our clock (some old iPhones say it in
     // seconds, everyone else in milliseconds).
     const iv = interval > 0 && interval < 1 ? interval * 1000 : interval;
     const dt = (iv > 0 ? clamp(iv, 1, 50) : last ? clamp(t - last, 1, 50) : 16) / 1000;
     last = t;
+    const v = +bounce?.v || 0;
+    const across = +bounce?.h || 0;
     if (!armed) {
-      // Wait for the swing back to finish: everything calm for a moment.
-      if (Math.max(Math.abs(a), Math.abs(b), Math.abs(g)) > settle) still = 0;
+      const calm = Math.max(Math.abs(x), Math.abs(y), Math.abs(z)) < settle && Math.abs(v) < push * 0.4;
+      if (!calm) still = 0;
       else if (!still) still = t;
-      if (still && t - still >= quiet) {
+      if (still && t - still >= quiet && t - firedAt >= gap) {
         armed = true;
         samples = [];
       }
       return null;
     }
-    samples.push({ t, a: a * dt, b: b * dt, g: g * dt });
+    samples.push({ t, x: x * dt, y: y * dt, z: z * dt });
     while (samples.length && t - samples[0].t > win) samples.shift();
-    let A = 0;
-    let B = 0;
-    let G = 0;
+    let X = 0;
+    let Y = 0;
+    let Z = 0;
     for (const s of samples) {
-      A += s.a;
-      B += s.b;
-      G += s.g;
+      X += s.x;
+      Y += s.y;
+      Z += s.z;
     }
+    const fire = (name) => {
+      armed = false;
+      still = 0;
+      firedAt = t;
+      samples = [];
+      return name;
+    };
+    // A bounce: a hard push up or down, with the phone hardly turning.
+    if (Math.abs(v) >= push && Math.abs(v) > across * 1.5 && Math.max(Math.abs(X), Math.abs(Y), Math.abs(Z)) < need * 0.6) return fire("add");
     const turns = [
-      ["a", A],
-      ["b", B],
-      ["g", G],
-    ].sort((x, y) => Math.abs(y[1]) - Math.abs(x[1]));
+      ["x", X],
+      ["y", Y],
+      ["z", Z],
+    ].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
     const [axis, deg] = turns[0];
     // Twisting needs a bit more (wrists roll a little with every flick), and clear dominance.
-    const enough = Math.abs(deg) >= (axis === "a" ? need * 1.4 : need);
+    const enough = Math.abs(deg) >= (axis === "z" ? need * 1.4 : need);
     if (!enough || Math.abs(deg) < Math.abs(turns[1][1]) * 1.7) return null;
-    let name = null;
-    if (axis === "g") name = deg > 0 ? "next" : "prev";
-    else if (axis === "a") name = deg > 0 ? "shelfPrev" : "shelfNext";
-    else if (deg > 0) name = "add"; // top edge towards you; tipping it away is just how people hold phones
-    // A big turn that isn't a gesture (tipping the phone away) still has to settle first, or its
-    // swing back would read as the opposite move.
-    armed = false;
-    still = 0;
-    samples = [];
-    return name;
+    if (axis === "y") return fire(deg > 0 ? "next" : "prev");
+    if (axis === "z") return fire(deg > 0 ? "shelfPrev" : "shelfNext");
+    return fire("add"); // a flick of the top towards you or away
   };
+}
+
+/** Acceleration along gravity (v) and across it (h), from a devicemotion event. Null if unknown. */
+export function bounceOf(e) {
+  const a = e.acceleration;
+  const ag = e.accelerationIncludingGravity;
+  if (!a || !ag || a.x == null || ag.x == null) return null;
+  const g = { x: ag.x - a.x, y: ag.y - a.y, z: ag.z - a.z };
+  const gl = Math.hypot(g.x, g.y, g.z);
+  if (gl < 5) return null; // no sense of down (free fall, or a sensor that can't tell)
+  const v = (a.x * g.x + a.y * g.y + a.z * g.z) / gl;
+  const total = Math.hypot(a.x, a.y, a.z);
+  return { v, h: Math.sqrt(Math.max(0, total * total - v * v)) };
+}
+
+function savedAxes() {
+  try {
+    const a = JSON.parse(localStorage.getItem(AXES_KEY) || "null");
+    if (a?.x?.length === 2 && a?.y?.length === 2 && a?.z?.length === 2) return a;
+  } catch {}
+  return null;
 }
 
 /**
@@ -118,6 +218,10 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
   let raf = 0;
   let lastFrame = 0;
   let read = gestureReader();
+  let axes = savedAxes() || (isApple() ? AXES.apple : AXES.standard);
+  let learner = savedAxes() ? null : axisLearner();
+  let turn = { alpha: 0, beta: 0, gamma: 0 }; // reported turn since the last orientation reading
+  let lastO = null;
 
   // Smoothing runs per frame against the clock, not per sensor event, so it feels the same on a
   // 60 Hz and a 120 Hz screen and whatever rate the sensors happen to report at.
@@ -138,7 +242,21 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
   }
 
   function orientation(e) {
-    if (e.beta == null || e.gamma == null || !tilt()) return;
+    if (e.beta == null || e.gamma == null) return;
+    if (learner) {
+      if (lastO) learner.feed(turn, e.beta - lastO.beta, e.gamma - lastO.gamma, e.beta);
+      turn = { alpha: 0, beta: 0, gamma: 0 };
+      lastO = { beta: e.beta, gamma: e.gamma };
+      const learnt = learner.result();
+      if (learnt) {
+        axes = learnt;
+        learner = null;
+        try {
+          localStorage.setItem(AXES_KEY, JSON.stringify(learnt));
+        } catch {}
+      }
+    }
+    if (!tilt()) return;
     const b = clamp(e.beta, -90, 90);
     const g = clamp(e.gamma, -90, 90);
     if (!base) base = { b, g };
@@ -151,11 +269,17 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
 
   function motion(e) {
     const now = e.timeStamp || performance.now();
+    const r = e.rotationRate;
+    if (learner && r) {
+      const iv = e.interval > 0 && e.interval < 1 ? e.interval * 1000 : e.interval || 16;
+      const dt = clamp(iv, 1, 50) / 1000;
+      for (const n of ["alpha", "beta", "gamma"]) turn[n] += (+r[n] || 0) * dt;
+    }
     if (!canGesture()) {
       read = gestureReader(); // forget anything half-done
       return;
     }
-    const name = read(now, e.rotationRate, e.interval);
+    const name = read(now, toDevice(r, axes), e.interval, bounceOf(e));
     if (name) onGesture?.(name);
   }
 

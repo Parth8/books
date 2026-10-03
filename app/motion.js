@@ -68,7 +68,7 @@ function motionGesture(name) {
   } else if (name === "add") {
     feel("pop", "success");
     openAdd();
-    say("🚀", "FLICK UP! ADD A BOOK");
+    say("🚀", "BOUNCE! ADD A BOOK");
   }
 }
 
@@ -97,8 +97,8 @@ function motionGuide() {
     "div",
     { class: "mo-guide" },
     move("flick", "FLICK SIDEWAYS", "Turn the phone quickly to face right and back, like turning a page: next book. Left: back one."),
-    move("twist", "TWIST", "Turn it like a steering wheel: the next shelf (or the one before)."),
-    move("lift", "FLICK UP", "Tip the top edge quickly towards you and back: add a book."),
+    move("twist", "TWIST", "Turn it like a steering wheel: one shelf along (the other way: one back)."),
+    move("lift", "BOUNCE", "Bounce the phone up or down, or flick its top towards you and back: add a book."),
     move("tilt", "TILT", "Just tilt: the pile leans, the lights swing, the cover catches the light."),
   );
 }
@@ -119,7 +119,7 @@ export async function motionInvite({ fromSettings = false } = {}) {
     ],
     submit: () => enableMotion(),
   });
-  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, twist, tip, tilt", tone: "lime" });
+  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, twist, bounce, tilt", tone: "lime" });
   refreshMe();
 }
 

@@ -50,9 +50,10 @@
   50% { transform: rotate(-40deg); }
 }
 @keyframes mo-lift {
-  0%, 30%, 100% { transform: perspective(200px); }
-  45% { transform: perspective(200px) rotateX(-50deg); }
-  62% { transform: perspective(200px) rotateX(6deg); }
+  0%, 30%, 100% { transform: none; }
+  40% { transform: translateY(-12px); }
+  52% { transform: translateY(4px); }
+  62% { transform: translateY(-2px); }
 }
 @keyframes mo-tilt {
   from { transform: perspective(200px) rotateY(-25deg); }

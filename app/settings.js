@@ -51,7 +51,7 @@ function switchRow(icon, title, text, pref) {
 /** Motion controls: switching on asks permission (in the tap), and shows the moves. */
 function motionRow() {
   const sw = h("span", { class: `switch${fx.motion ? " on" : ""}`, "aria-hidden": "true" }, h("i"));
-  const b = h("button", { type: "button", class: "me-row", role: "switch", "aria-checked": String(fx.motion), "aria-label": "MOTION CONTROLS" }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: "📳" }), h("span", { class: "me-row-text" }, h("b", { text: "MOTION CONTROLS" }), h("small", { text: "Turn the phone sideways and back for the next book, twist for the next shelf, tip the top towards you to add. Tilt to play with the light." })), sw);
+  const b = h("button", { type: "button", class: "me-row", role: "switch", "aria-checked": String(fx.motion), "aria-label": "MOTION CONTROLS" }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: "📳" }), h("span", { class: "me-row-text" }, h("b", { text: "MOTION CONTROLS" }), h("small", { text: "Turn the phone sideways and back for the next book, twist for the next shelf, bounce it to add. Tilt to play with the light." })), sw);
   b.addEventListener("click", () => {
     if (fx.motion) {
       fx.set("motion", false);

@@ -145,8 +145,16 @@ async function goTo(page, id) {
   throw new Error(`couldn't find ${id} in the pile`);
 }
 
+/** The middle of an element, once it has stopped moving (a card may still be dealing in). */
 async function center(loc) {
-  const b = await loc.boundingBox();
+  let b = await loc.boundingBox();
+  for (let i = 0; i < 40; i++) {
+    await new Promise((ok) => setTimeout(ok, 50));
+    const n = await loc.boundingBox();
+    const still = n && b && Math.abs(n.x - b.x) < 0.5 && Math.abs(n.y - b.y) < 0.5 && Math.abs(n.width - b.width) < 0.5;
+    b = n;
+    if (still) break;
+  }
   return { x: b.x + b.width / 2, y: b.y + b.height / 2, b };
 }
 async function starter(page) {
@@ -873,7 +881,7 @@ await run("motion controls: flick for books, twist for shelves, flick up to add,
     // (events dispatched in one go share a timestamp, so settle with a still pause between moves)
     const still = () => page.evaluate(() => new Promise((ok) => {
       const id = setInterval(() => dispatchEvent(new DeviceMotionEvent("devicemotion", { rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 })), 16);
-      setTimeout(() => (clearInterval(id), ok()), 450);
+      setTimeout(() => (clearInterval(id), ok()), 900);
     }));
     const first = (await app(page)).top;
     await motion("gamma", 400);
@@ -895,6 +903,14 @@ await run("motion controls: flick for books, twist for shelves, flick up to add,
     await motion("alpha", -600);
     await page.waitForTimeout(400);
     assert.equal((await app(page)).shelf, "want");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("#panel-add[aria-hidden=true]", { state: "attached" });
+    // Bouncing the phone up (held upright: gravity along y) also adds a book.
+    await still();
+    await page.evaluate(() => {
+      for (const v of [3, 8, 11, 6, -4]) dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: v, z: 0 }, accelerationIncludingGravity: { x: 0, y: 9.8 + v, z: 0 }, rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 }));
+    });
+    await page.waitForSelector("#panel-add[aria-hidden=false]");
     await page.keyboard.press("Escape");
     for (let i = 0; i < 25; i++) await page.evaluate((i) => dispatchEvent(new DeviceOrientationEvent("deviceorientation", { alpha: 0, beta: i ? 60 : 45, gamma: i ? 18 : 0 })), i);
     await page.waitForFunction(() => /px$/.test(document.querySelector("#deck").style.translate) && document.querySelector("#deck").style.translate !== "0px 0px");

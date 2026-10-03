@@ -59,18 +59,16 @@ Switch on You → Settings → **Motion controls** (iPhone asks for permission, 
 
 | Move | What it does |
 |---|---|
-| **Flick** the phone right / left (turn it to face right or left and back, like a page) | Next / previous book |
-| **Twist** it like a steering wheel | Next / previous shelf |
-| **Flick up** (tip the top edge towards you and back) | Add a book |
+| **Flick** the phone right / left: turn it to face right or left and back, like turning a page | Next / previous book |
+| **Twist** it like a steering wheel | One shelf along (twist the other way: one back) |
+| **Bounce** it up or down, or flick its top towards or away from you | Add a book |
 | **Tilt** | The pile leans in 3D, the background shifts the other way, the bulbs and fairy lights swing, and a hotspot of light slides across the cover |
 
 - **Learning the moves.** A guide with little animated phones shows each move. The first couple of times you use a move, the island says what it did.
-- **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open. After each move it waits for the phone to settle, so the swing back never counts as a move the other way: one flick is one book.
-- **How moves are read.** From the gyroscope (how fast the phone turns), summed over the last quarter second. A move needs about 28° of turn, clearly about one axis, so a twist is never read as a flick. The pure reader (`gestureReader` in `js/gyro.js`) is unit-tested with recorded-style numbers.
-- **Level is relative.** "Level" is however you're holding the phone, learnt over a couple of seconds.
-- **Privacy.** Nothing about how you move your phone is stored or sent.
-- **Reduce Motion.** With Reduce Motion on, tilt effects are off; the moves still work.
-- **Introducing it.** On a phone that supports it, Shelfie shows it off once, on a later visit.
+- **One move, one step.** After each move Shelfie waits until the phone has been still for a moment (and at least 0.8 s), so the swing back never counts as a move the other way, and a wobbly twist is still one shelf.
+- **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open.
+- **How moves are read.** Turns come from the gyroscope, summed over the last quarter second: a move needs about 28° of turn, clearly about one axis. A bounce comes from the accelerometer, measured along gravity, so it works however you hold the phone.
+- **iPhone's axes.** Safari on iPhone reports the three turning speeds in a different order from the web standard (which is why a front-and-back flick used to change the shelf). Shelfie maps them per platform, then double-checks the mapping against the phone's own tilt readings while you use it, and remembers what it learnt on this device.
 
 ## Goals
 
