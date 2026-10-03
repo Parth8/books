@@ -1,0 +1,142 @@
+/* Add to home screen */
+.t-home {
+  background: var(--cyan);
+  color: #0d0d0d;
+  gap: 10px;
+}
+.t-home .sync-text { color: #0d0d0d; }
+.install-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.install-go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 54px;
+  padding: 0 16px;
+  border-radius: 16px;
+  background: #0d0d0d;
+  color: var(--cyan);
+  font: 900 20px/1 var(--display);
+  font-stretch: 75%;
+  text-decoration: none;
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.35);
+}
+.install-go svg { width: 20px; height: 20px; }
+.install-go.quiet {
+  background: transparent;
+  color: #0d0d0d;
+  border: 3px solid #0d0d0d;
+  box-shadow: none;
+  font-size: 16px;
+}
+.install-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.install-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: step;
+  display: grid;
+  gap: 10px;
+  font: 400 14px/1.45 var(--mono);
+}
+.install-steps li {
+  counter-increment: step;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.install-steps li::before {
+  content: counter(step);
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #0d0d0d;
+  color: var(--cyan);
+  font: 900 15px/1 var(--display);
+}
+.install-steps b { font-weight: 700; }
+.install-steps svg { width: 16px; height: 16px; vertical-align: -3px; }
+.guide {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: step;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.guide li {
+  counter-increment: step;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.guide-art {
+  display: block;
+  border-radius: 16px;
+  background: #0d0d0d;
+  padding: 6px 4px 2px;
+  border: 2px solid #0d0d0d;
+}
+.guide-art svg { display: block; width: 100%; height: auto; }
+.guide-cap {
+  display: block;
+  font: 400 12px/1.4 var(--mono);
+}
+.guide-cap::before {
+  content: counter(step);
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #0d0d0d;
+  color: var(--cyan);
+  font: 900 12px/1 var(--display);
+  vertical-align: 1px;
+}
+.guide-cap b { font-weight: 700; }
+.guide .d { fill: #1e1e1e; stroke: #555; stroke-width: 1.2; }
+.guide .s { fill: #3a3a3a; }
+.guide .i { fill: none; stroke: #cfcfcf; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.guide .t { fill: #fff; font: 700 7px var(--mono); }
+.guide .t.sm { font-size: 6px; }
+.guide .hl { fill: #1f6f8b; }
+.guide .m {
+  fill: none;
+  stroke: var(--lime);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  animation: scribble 0.8s 0.35s ease-out both;
+}
+.guide li + li .m { animation-delay: 1s; }
+.guide .p {
+  fill: var(--lime);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tap-pulse 1.4s 1.2s ease-out 3;
+}
+.guide li + li .p { animation-delay: 1.9s; }
+@keyframes scribble {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes tap-pulse {
+  0% { opacity: 0.45; transform: scale(0.5); }
+  100% { opacity: 0; transform: scale(1.8); }
+}

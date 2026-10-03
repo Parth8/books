@@ -1,0 +1,78 @@
+/* Spotlight tips */
+.tip {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  z-index: 4500;
+  overflow: visible;
+}
+.tip-ring {
+  position: fixed;
+  border-radius: 22px;
+  border: 3px solid var(--lime);
+  box-shadow: 0 0 0 9999px rgba(5, 5, 5, 0.66), 0 0 24px rgba(231, 255, 61, 0.6);
+  pointer-events: none;
+}
+.tip-bubble {
+  --inset: max(16px, calc(50% - 250px));
+  position: fixed;
+  left: var(--inset);
+  right: var(--inset);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px 14px;
+  border-radius: 22px;
+  border: 3px solid #0d0d0d;
+  box-shadow: 6px 6px 0 #0d0d0d;
+  color: #0d0d0d;
+}
+.tip-bubble::before {
+  content: "";
+  position: absolute;
+  left: clamp(18px, calc(var(--arrow-x) - var(--inset) - 12px), calc(100% - 42px));
+  width: 22px;
+  height: 22px;
+  background: inherit;
+  border: 3px solid #0d0d0d;
+  transform: rotate(45deg);
+}
+.tip-bubble.below::before {
+  top: -14px;
+  border-right: 0;
+  border-bottom: 0;
+}
+.tip-bubble.above::before {
+  bottom: -14px;
+  border-left: 0;
+  border-top: 0;
+}
+.tone-lime { background: var(--lime); }
+.tone-pink { background: var(--pink); }
+.tone-cyan { background: var(--cyan); }
+.tone-orange { background: var(--orange); }
+.tone-yellow { background: var(--yellow); }
+.tip-title {
+  font: 900 26px/0.95 var(--display);
+  font-stretch: 66%;
+}
+.tip-text {
+  font: 400 13px/1.45 var(--mono);
+}
+.tip-btn {
+  align-self: flex-end;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 14px;
+  background: #0d0d0d;
+  color: #fff;
+  font: 900 18px/1 var(--display);
+  font-stretch: 75%;
+}

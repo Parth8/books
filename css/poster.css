@@ -1,0 +1,129 @@
+/* ============================================================
+   Posters: big moments take over the screen
+   ============================================================ */
+.poster {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  z-index: 3000;
+  background: var(--tone);
+  color: var(--ink);
+  overflow: hidden;
+  touch-action: none;
+  outline: none;
+}
+.poster::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.12;
+  pointer-events: none;
+  background-image: var(--grain, none);
+}
+.poster {
+  color: var(--ink);
+}
+.poster-inner {
+  position: relative;
+  height: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: calc(40px + env(safe-area-inset-top)) 22px calc(28px + env(safe-area-inset-bottom));
+  color: var(--ink, #fff);
+}
+.poster-kicker {
+  font: 700 12px/1 var(--mono);
+  letter-spacing: 0.2em;
+  animation: rise 0.5s var(--ease) both;
+}
+.poster-words {
+  margin-top: 14px;
+}
+.poster-line {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.04em;
+}
+.poster-line b {
+  display: block;
+  white-space: nowrap;
+  font: 900 min(31vw, 168px) / 0.84 var(--display);
+  font-stretch: 62%;
+  letter-spacing: -0.01em;
+  animation: slam 0.95s cubic-bezier(0.22, 1.3, 0.36, 1) calc(var(--k) * 150ms + 160ms) both;
+}
+@keyframes slam {
+  from { transform: translateY(105%) skewY(10deg); }
+}
+@keyframes rise {
+  from { transform: translateY(20px); opacity: 0; }
+}
+.poster-art {
+  --ink: #0d0d0d;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  --sw: min(46vw, 200px, 28dvh);
+}
+.poster-art .stamp {
+  position: relative;
+  left: auto;
+  top: auto;
+  margin: 0;
+  transform: rotate(-7deg);
+  animation: drop 0.9s cubic-bezier(0.2, 1.5, 0.4, 1) 0.35s both;
+}
+.poster-art .stamp .postmark {
+  animation: thunk 0.55s cubic-bezier(0.2, 1.6, 0.4, 1) 1.1s both;
+}
+@keyframes drop {
+  from { transform: translateY(-80vh) rotate(30deg); }
+}
+.poster-sub {
+  margin-top: auto;
+  font: 700 15px/1.35 var(--mono);
+  text-transform: uppercase;
+  animation: rise 0.5s var(--ease) 0.5s both;
+}
+.poster-hint {
+  margin-top: 16px;
+  font: 10px/1 var(--pixel);
+  opacity: 0.6;
+  animation: rise 0.5s var(--ease) 0.8s both;
+}
+
+/* Party mode */
+body.party .stage {
+  animation: party 0.6s linear infinite;
+}
+@keyframes party {
+  to { filter: hue-rotate(360deg); }
+}
+
+/* Short screens: tighter everything */
+@media (max-height: 700px) {
+  .tape { height: 60px; }
+  .tape-item b { font-size: 54px; }
+  .key { height: 50px; }
+  .knob { width: 92px; height: 92px; }
+  .screen { min-height: 62px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

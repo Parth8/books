@@ -1,0 +1,175 @@
+/* ============================================================
+   More juice
+   ============================================================ */
+.haptic-switch {
+  position: fixed;
+  left: -200px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.shockwave {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  border: 6px solid var(--lime);
+  background: transparent;
+  pointer-events: none;
+  z-index: 2500;
+  transform: translate(-50%, -50%);
+}
+.combo {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 14px 6px;
+  background: var(--lime);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  border-radius: 14px;
+  transform: rotate(-8deg);
+  pointer-events: none;
+}
+.combo b {
+  font: 900 40px/0.85 var(--display);
+  font-stretch: 62%;
+}
+.combo small {
+  font: 9px/1 var(--pixel);
+}
+.combo.hot {
+  background: var(--orange);
+}
+
+/* Goals */
+.p-note {
+  margin: -6px 4px 10px;
+  font: 9px/1.6 var(--pixel);
+  color: #8a8a8a;
+}
+.tile-dial {
+  flex-direction: column;
+  align-items: center;
+  touch-action: none;
+  cursor: grab;
+  outline-offset: -3px;
+}
+.dial-wrap {
+  position: relative;
+  width: 116px;
+  height: 116px;
+}
+.dial-wrap .dial-in {
+  position: absolute;
+  inset: 0;
+  top: 0;
+  height: auto;
+}
+.dial-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.dial-label {
+  font: 700 11px/1 var(--mono);
+  letter-spacing: 0.14em;
+}
+.t-dial-day { background: var(--night-2); }
+.t-dial-month { background: #2a1430; }
+.t-dial-month .arc { stroke: var(--pink); }
+.t-dial-year {
+  flex-direction: row;
+  justify-content: space-between;
+  background: #0f2733;
+  min-height: 160px;
+}
+.t-dial-year .arc { stroke: var(--cyan); }
+.t-dial-year .dial-side {
+  align-items: flex-end;
+  text-align: right;
+  flex: 1;
+}
+.t-dial-year .big {
+  font-size: 58px;
+  margin: 4px 0;
+}
+.tile-dial.done .arc {
+  stroke: var(--lime);
+  filter: drop-shadow(0 0 6px var(--lime));
+}
+
+/* Sync */
+.t-sync {
+  background: var(--paper);
+  color: var(--ink);
+  gap: 10px;
+}
+.sync-text {
+  font: 400 12px/1.45 var(--mono);
+}
+.sync-text.warn,
+.sync-status.warn {
+  color: #c4122f;
+}
+.sync-status {
+  font: 700 12px/1.2 var(--mono);
+  letter-spacing: 0.08em;
+}
+.sync-code {
+  padding: 14px 8px;
+  border-radius: 14px;
+  background: var(--lcd);
+  color: var(--lcd-ink);
+  font: min(3.2vw, 13px)/1.3 var(--pixel);
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-align: center;
+  word-break: break-all;
+  box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.7);
+  -webkit-user-select: all;
+  user-select: all;
+}
+.t-sync .lcd-input input {
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.keys.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+.key.toggle:not(.on) .cap {
+  opacity: 0.55;
+}
+.key.toggle.on .cap {
+  background: linear-gradient(180deg, #f6ff9e, var(--lime));
+  box-shadow: 0 6px 0 #9fb000, inset 0 2px 0 #fff;
+}
+.lg-or {
+  align-self: center;
+  font: 9px/1 var(--pixel);
+  color: #8a8a8a;
+}
+.legend {
+  flex-wrap: wrap;
+}
+.wb i {
+  animation: rise-bar 0.8s var(--spring) both;
+  animation-delay: calc(var(--i, 0) * 60ms + 200ms);
+  transform-origin: bottom;
+}
+@keyframes rise-bar {
+  from { transform: scaleY(0); }
+}

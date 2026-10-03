@@ -1,0 +1,29 @@
+/* Idle fidgets: little signs of life while you're just looking */
+.fidget-bounce { animation: fidget-bounce 0.9s var(--bounce); }
+@keyframes fidget-bounce {
+  30% { transform: translateY(-10px) rotate(-2deg); }
+  60% { transform: translateY(2px) rotate(1deg); }
+}
+.knob-ring.fidget { animation: ring-glow 1.6s cubic-bezier(.3, 1.4, .5, 1); }
+@keyframes ring-glow {
+  40% { transform: scale(1.08); opacity: 1; }
+}
+
+/* The cover on top drifts slowly (Ken Burns), for good: individual transform properties on
+   their own layer, so the compositor does it all and the page never re-lays out. */
+.stamp.top .pic .art,
+.stamp.top .pic img.in {
+  animation: drift 9s ease-in-out infinite alternate;
+}
+/* The drift only slides (never zooms in): enlarging a drawn image is what made covers soft.
+   The picture is a little larger than its window, so the slide never shows an edge. */
+.pic .art,
+.pic img {
+  inset: -4%;
+  width: 108%;
+  height: 108%;
+}
+@keyframes drift {
+  from { transform: translate(1.5%, 1%); }
+  to { transform: translate(-1.5%, -1%); }
+}

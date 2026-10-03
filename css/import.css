@@ -1,0 +1,206 @@
+/* Goodreads import */
+.gr-lede {
+  font: 400 14px/1.45 var(--mono);
+  color: #cfcfcf;
+  margin: 0 2px 14px;
+}
+.gr-steps {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gr-step {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 20px;
+  background: var(--paper);
+  color: #0d0d0d;
+  border: 2px solid #0d0d0d;
+}
+.gr-step b {
+  font: 900 20px/1 var(--display);
+  font-stretch: 70%;
+}
+.gr-step p {
+  margin-top: 4px;
+  font: 400 12px/1.45 var(--mono);
+}
+.gr-n {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--pink);
+  color: #0d0d0d;
+  border: 2px solid #0d0d0d;
+  font: 900 20px/1 var(--display);
+}
+.gr-link {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #0d0d0d;
+  color: var(--lime);
+  font: 700 12px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-decoration: none;
+}
+.gr-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 26px 16px;
+  border-radius: 24px;
+  border: 3px dashed var(--pink);
+  background: rgba(255, 106, 213, 0.08);
+  color: #fff;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 0.25s var(--bounce), background 0.2s;
+}
+.gr-drop:active,
+.gr-drop.over {
+  transform: scale(0.97);
+  background: rgba(255, 106, 213, 0.2);
+}
+.gr-drop-icon {
+  font-size: 40px;
+}
+.gr-drop b {
+  font: 900 26px/1 var(--display);
+  font-stretch: 66%;
+}
+.gr-drop small {
+  font: 400 11px/1 var(--mono);
+  color: #cfcfcf;
+}
+.gr-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 31, 61, 0.14);
+  border: 2px solid #ff4d63;
+  color: #ff8c9a;
+  font: 700 13px/1.4 var(--mono);
+}
+.gr-found {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 18px;
+  border-radius: 26px;
+  background: var(--pink);
+  color: #0d0d0d;
+  border: 3px solid #0d0d0d;
+  box-shadow: 6px 6px 0 #0d0d0d;
+  margin-bottom: 14px;
+}
+.gr-found small,
+.gr-found span {
+  font: 700 11px/1 var(--mono);
+  letter-spacing: 0.14em;
+}
+.gr-total {
+  font: 900 110px/0.85 var(--display);
+  font-stretch: 62%;
+}
+.gr-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.gr-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 6px;
+  border-radius: 18px;
+  color: #0d0d0d;
+}
+.gr-stat b {
+  font: 900 34px/0.9 var(--display);
+  font-stretch: 62%;
+}
+.gr-stat small {
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.12em;
+}
+.gr-stat.read { background: var(--yellow); }
+.gr-stat.reading { background: var(--cyan); }
+.gr-stat.want { background: var(--orange); }
+.gr-toggle {
+  width: 100%;
+  margin: 12px 0;
+  padding: 14px;
+  border-radius: 16px;
+  border: 2px solid #444;
+  color: #cfcfcf;
+  font: 700 12px/1.3 var(--mono);
+  text-align: left;
+}
+.gr-toggle.on {
+  border-color: var(--lime);
+  color: var(--lime);
+}
+.gr-cta {
+  width: 100%;
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: var(--pink);
+  color: #0d0d0d;
+  border: 3px solid #0d0d0d;
+  box-shadow: 5px 5px 0 var(--lime);
+  text-align: left;
+}
+.gr-cta span {
+  grid-row: span 2;
+  font-size: 30px;
+}
+.gr-cta b {
+  font: 900 20px/1 var(--display);
+  font-stretch: 70%;
+}
+.gr-cta small {
+  font: 700 10px/1.2 var(--mono);
+  letter-spacing: 0.1em;
+}
+.t-import {
+  background: var(--pink);
+  color: #0d0d0d;
+  gap: 10px;
+}
+.keys.one {
+  grid-template-columns: 1fr;
+}
+.keys.three .key small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 92%;
+}
+.danger-word {
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: #ff1f3d;
+  color: #fff;
+  font-weight: 700;
+}
+.p-actions + .p-note {
+  margin-top: 18px;
+  padding-bottom: 24px;
+}

@@ -1,0 +1,110 @@
+/* ============================================================
+   The island
+   ============================================================ */
+.island {
+  position: fixed;
+  inset: auto;
+  top: max(10px, env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  width: fit-content;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  z-index: 1000;
+  display: none;
+  color: #fff;
+  background: #000;
+  border-radius: 28px;
+  min-width: 120px;
+  max-width: min(calc(100vw - 24px), 420px);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 14px 40px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.island.open {
+  display: block;
+}
+.island[data-tone="pink"] { --glow: var(--pink); }
+.island[data-tone="lime"] { --glow: var(--lime); }
+.island[data-tone="cyan"] { --glow: var(--cyan); }
+.island[data-tone="violet"] { --glow: #b49bff; }
+.island[data-tone="sun"] { --glow: var(--orange); }
+.isl-inner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 18px 9px 9px;
+  white-space: nowrap;
+}
+.isl-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 21px;
+  background: var(--glow, var(--pink));
+}
+.isl-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.isl-title {
+  font: 900 19px/1 var(--display);
+  font-stretch: 70%;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.isl-sub {
+  margin-top: 2px;
+  color: #a8a8a8;
+  font: 400 11px/1.2 var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.isl-value {
+  color: var(--glow);
+  font: 9px/1 var(--pixel);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.isl-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  margin: 2px 2px 3px;
+  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.15) 0 8px, transparent 8px 10px);
+  overflow: hidden;
+}
+.isl-bar::after {
+  content: "";
+  display: block;
+  height: 100%;
+  width: calc(var(--p, 0) * 100%);
+  background: repeating-linear-gradient(90deg, var(--glow) 0 8px, transparent 8px 10px);
+  animation: grow 0.9s var(--spring) 0.3s both;
+}
+@keyframes grow {
+  from { width: 0; }
+}
+.isl-bar[hidden],
+.isl-sub[hidden],
+.isl-value[hidden] {
+  display: none;
+}
+
+.confetti {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 2000;
+}

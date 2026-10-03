@@ -1,0 +1,60 @@
+/* Loaded last on purpose: rendering-cost overrides (fewer GPU layers, no masks on moving things)
+   that refine the rules in the files before it. */
+/* Ticket notches: two circles in the stage colour, level with the tear line (cheaper than a
+   mask on a card that moves) */
+.tk-stub::before,
+.tk-stub::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--notch) * -1 - 1px);
+  width: calc(var(--notch) * 2);
+  height: calc(var(--notch) * 2);
+  border-radius: 50%;
+  background: var(--stage, #0d0d0d);
+}
+.tk-stub::before { left: calc(var(--notch) * -1); }
+.tk-stub::after { right: calc(var(--notch) * -1); }
+.tk-stub { overflow: visible; }
+
+/* Pop-overs used for overlays (island, confetti, tips) need no backdrop layer of their own */
+[popover]::backdrop { display: none; }
+/* The bulb strand: a small, self-contained box (its glows used to stretch it into a huge layer) */
+.edison { contain: layout style; }
+.ed-halo { width: 44px; height: 44px; margin-left: -22px; }
+
+/* A pass is flat until it's turned over: no back face, no 3D, no extra GPU layers */
+.stamp:not(.has-back) { perspective: none; }
+.stamp:not(.has-back) .flipper { transform-style: flat; }
+.stamp:not(.has-back) .face { backface-visibility: visible; -webkit-backface-visibility: visible; }
+.stamp:not(.has-back) .face.back { display: none; }
+/* The strand over the title is a small, clipped box */
+.edison.over-title { height: 96px; contain: layout style paint; }
+
+/* Only real layers: the egg-effects box exists only while an effect plays; the lid is 3D only
+   while it opens; the strand is one deliberate, small layer (not a huge "overlap" layer). */
+.book-fx:empty { display: none; }
+.lid { backface-visibility: visible; -webkit-backface-visibility: visible; }
+.stamp.peek .lid { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.edison.over-title { will-change: transform; }
+
+/* The liquid's idle ripple: a wavy highlight sliding along the surface (transform only) */
+.ripple {
+  position: absolute;
+  left: 0;
+  width: 200%;
+  height: 8px;
+  bottom: calc(var(--lvl, 0) * 100% - 3px);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8'%3E%3Cpath d='M0 4q10-4 20 0t20 0' fill='none' stroke='white' stroke-opacity='.7' stroke-width='2'/%3E%3C/svg%3E") 0 0 / 40px 8px repeat-x;
+  pointer-events: none;
+  display: none;
+  transition: bottom 0.5s var(--spring);
+}
+.stamp.top.reading .ripple {
+  display: block;
+  animation: ripple 2.6s linear infinite;
+}
+@keyframes ripple {
+  to { transform: translateX(-40px); }
+}
+.stamp.scrubbing .ripple { opacity: 0; }
+.panel-up .ripple { animation-play-state: paused; }

@@ -1,0 +1,131 @@
+/* ============================================================
+   Edison bulbs over the headings
+   ============================================================ */
+.edison {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  height: var(--sag);
+  pointer-events: none;
+  z-index: 3;
+}
+.ed-wire svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.ed-wire path {
+  fill: none;
+  stroke: #2b2622;
+  stroke-width: 2;
+}
+.ed-bulb {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: 18px;
+  margin-left: -9px;
+  transform-origin: 50% 0;
+  rotate: calc(var(--sway) + var(--swing, 0deg));
+  transition: rotate 0.9s cubic-bezier(.3, 1.4, .5, 1);
+}
+.ed-cord {
+  display: block;
+  width: 2px;
+  height: var(--drop);
+  margin: 0 auto;
+  background: #2b2622;
+}
+.ed-cap {
+  display: block;
+  width: 10px;
+  height: 7px;
+  margin: 0 auto;
+  border-radius: 2px 2px 1px 1px;
+  background: repeating-linear-gradient(180deg, #8a7a5c 0 1.5px, #3d352a 1.5px 3px);
+}
+.ed-glass {
+  position: relative;
+  display: block;
+  width: 18px;
+  height: 25px;
+  margin: -1px auto 0;
+  border-radius: 46% 46% 50% 50% / 38% 38% 62% 62%;
+  background: radial-gradient(circle at 50% 58%, #fff6cf 0 12%, #ffc163 32%, rgba(255, 150, 50, 0.6) 60%, rgba(255, 130, 40, 0.25) 100%);
+  border: 1px solid rgba(255, 225, 170, 0.55);
+  box-shadow: inset 0 -3px 5px rgba(255, 120, 30, 0.35), inset 2px 2px 3px rgba(255, 255, 255, 0.45);
+}
+.ed-glass svg {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  width: 11px;
+  height: 17px;
+}
+/* The glow: a pre-blurred halo that only fades */
+.ed-halo {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--drop) + 4px);
+  width: 64px;
+  height: 64px;
+  margin-left: -32px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 190, 90, 0.55), rgba(255, 150, 50, 0.18) 55%, transparent);
+  z-index: -1;
+}
+/* Bulbs glow steadily; the flicker comes in short, random stutters (lights.js), so between
+   them they cost nothing at all. */
+/* Over the shelf title */
+.hud { position: relative; }
+/* Strung behind the shelf name, so the bulbs backlight the sign instead of hiding it */
+.edison.over-title {
+  top: 46px;
+  z-index: 0;
+}
+.tape { z-index: 1; }
+/* Over the panel titles */
+.panel-grab .edison {
+  top: 4px;
+  left: 36%;
+  right: 22%; /* clear of the close button */
+  z-index: 0;
+}
+.panel-grab .x { position: relative; z-index: 1; }
+/* A single bulb hanging off each section heading */
+.p-h {
+  position: relative;
+  display: inline-block;
+  rotate: var(--tilt, -0.6deg);
+}
+.p-h::after {
+  content: "";
+  position: absolute;
+  right: -26px;
+  top: -16px;
+  width: 14px;
+  height: 20px;
+  border-radius: 46% 46% 50% 50% / 38% 38% 62% 62%;
+  background: radial-gradient(circle at 50% 58%, #fff6cf 0 12%, #ffc163 34%, rgba(255, 150, 50, 0.55) 65%, rgba(255, 130, 40, 0.2));
+  box-shadow: 0 -10px 0 -5px #3d352a, 0 0 16px 4px rgba(255, 170, 70, 0.45);
+}
+.p-h.flick::after { animation: ed-stutter 0.45s steps(1); }
+@keyframes ed-stutter {
+  0%, 100% { opacity: 1; }
+  20% { opacity: 0.2; }
+  35% { opacity: 1; }
+  55% { opacity: 0.35; }
+}
+.p-h:nth-of-type(2n) { --tilt: 0.8deg; }
+.p-h:nth-of-type(3n) { --tilt: -1.4deg; }
+.p-h:nth-of-type(5n) { --tilt: 1.2deg; }
+.panel-grab h2 { rotate: -1.5deg; }
+
+/* Brighter neon on the shelf name: a white core and a wide bloom (static), slightly crooked */
+.tape-item[aria-selected="true"] b {
+  rotate: -2deg;
+  text-shadow: 0 0 3px #fff, 0 0 16px color-mix(in srgb, var(--neon, #e7ff3d) 80%, transparent);
+  animation: none;
+}

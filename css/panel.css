@@ -1,0 +1,73 @@
+/* ============================================================
+   Panels
+   ============================================================ */
+.shade {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(5, 5, 5, 0.78);
+  opacity: 0;
+  pointer-events: none;
+  display: none;
+}
+/* No live blur behind panels: blurring a screen full of moving things every frame is what made
+   pulling Stats up stutter. A deep dim reads just as well. */
+.panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  height: 92dvh;
+  max-width: 520px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  border-radius: 32px 32px 0 0;
+  background: var(--night);
+  border: 1px solid #2a2a2a;
+  border-bottom: 0;
+  box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.6);
+  transform: translate3d(0, 100%, 0);
+  visibility: hidden;
+}
+.panel-grab {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 26px 18px 12px;
+  touch-action: none;
+  cursor: grab;
+}
+.panel-grab .grab {
+  position: absolute;
+  top: 9px;
+  left: 50%;
+  width: 44px;
+  height: 5px;
+  margin-left: -22px;
+  border-radius: 9px;
+  background: #4a4a4a;
+}
+.panel-grab h2 {
+  font: 900 46px/0.85 var(--display);
+  font-stretch: 62%;
+}
+.x {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--night-3);
+  font: 700 15px/1 var(--mono);
+}
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 14px calc(30px + env(safe-area-inset-bottom));
+  scrollbar-width: none;
+  -webkit-user-select: text;
+  user-select: text;
+}

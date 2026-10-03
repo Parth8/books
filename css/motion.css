@@ -1,0 +1,61 @@
+/* Motion controls guide: little phones doing each move */
+.mo-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mo-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+.mo-row b {
+  display: block;
+  font: 900 18px/1 var(--display);
+  font-stretch: 70%;
+}
+.mo-row small {
+  display: block;
+  margin-top: 3px;
+  font: 400 12px/1.4 var(--mono);
+}
+.mo-phone {
+  width: 26px;
+  height: 44px;
+  margin: 0 auto;
+  border-radius: 7px;
+  border: 3px solid #0d0d0d;
+  background: #fff;
+  display: grid;
+  place-items: center;
+}
+.mo-phone i {
+  width: 12px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--pink);
+}
+.mo-phone.flick { animation: mo-flick 1.6s cubic-bezier(.5, 0, .2, 1) infinite; }
+.mo-phone.twist { animation: mo-twist 1.8s cubic-bezier(.5, 0, .2, 1) infinite; }
+.mo-phone.lift { animation: mo-lift 1.6s cubic-bezier(.5, 0, .2, 1) infinite; }
+.mo-phone.tilt { animation: mo-tilt 3s ease-in-out infinite alternate; }
+@keyframes mo-flick {
+  0%, 30%, 100% { transform: perspective(200px); }
+  45% { transform: perspective(200px) rotateY(50deg); }
+  62% { transform: perspective(200px) rotateY(-6deg); }
+}
+@keyframes mo-twist {
+  0%, 30%, 100% { transform: none; }
+  50% { transform: rotate(-40deg); }
+}
+@keyframes mo-lift {
+  0%, 30%, 100% { transform: perspective(200px); }
+  45% { transform: perspective(200px) rotateX(-50deg); }
+  62% { transform: perspective(200px) rotateX(6deg); }
+}
+@keyframes mo-tilt {
+  from { transform: perspective(200px) rotateY(-25deg); }
+  to { transform: perspective(200px) rotateY(25deg); }
+}
+.pad.want .keys.three { grid-template-columns: 2fr 1fr 1fr; }

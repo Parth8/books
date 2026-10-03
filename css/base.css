@@ -1,0 +1,66 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+html {
+  background: var(--night);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  margin: 0;
+  background: var(--night) var(--grain, none);
+  color: var(--white);
+  font: 400 15px/1.4 var(--mono);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+img,
+svg,
+canvas {
+  -webkit-user-drag: none;
+}
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+:focus-visible {
+  outline: 3px solid var(--lime);
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+/* Grain lives in the page background (painted once), never as a layer over moving things. */
+.grain {
+  display: none;
+}
+
+/* ============================================================
+   Layout: one screen, no page scroll
+   ============================================================ */
+#app {
+  height: 100dvh;
+  max-width: 520px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  padding: calc(8px + env(safe-area-inset-top)) 0 calc(4px + env(safe-area-inset-bottom));
+}

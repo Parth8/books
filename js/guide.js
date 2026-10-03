@@ -1,6 +1,6 @@
 // Picture guides for adding Shelfie on Apple devices, where the browser can't do it for us.
 // Static, trusted SVG only (numbers below are layout, never data). Colours come from CSS
-// classes in styles.css, so the drawings follow the light and dark themes:
+// classes in css/install.css, so the drawings follow the light and dark themes:
 //   d device body · s soft content · i icon strokes · t text · hl highlight · m pencil circle · p tap pulse
 
 const frame = (body, viewBox = "0 0 120 150") =>

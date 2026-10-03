@@ -1,0 +1,155 @@
+   Pop-ups
+   ============================================================ */
+.pop {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 20px;
+  border: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  z-index: 5000;
+  overflow: auto;
+}
+.pop-dim {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 5, 5, 0.72);
+}
+.pop-card {
+  position: relative;
+  width: min(100%, 400px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px 20px 18px;
+  border-radius: 26px;
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  border: 3px solid #0d0d0d;
+  box-shadow: 8px 8px 0 #0d0d0d;
+}
+.pop-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  font: 900 34px/1 var(--display);
+  background: #0d0d0d;
+  color: var(--lime);
+  transform: rotate(-6deg);
+}
+.pop-icon.danger {
+  position: relative;
+  background: #ff1f3d;
+  color: #fff;
+  font-size: 38px;
+  animation: danger-throb 1.8s ease-in-out infinite;
+}
+/* The glow is a pre-blurred layer that only fades and grows: the GPU does it all. */
+.pop-icon.danger::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  z-index: -1;
+  border-radius: 30px;
+  background: radial-gradient(closest-side, rgba(255, 31, 61, 0.85), rgba(255, 31, 61, 0));
+  animation: danger-glow 1.8s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+@keyframes danger-throb {
+  0%, 100% { transform: rotate(-6deg) scale(1); }
+  50% { transform: rotate(-3deg) scale(1.07); }
+}
+@keyframes danger-glow {
+  0%, 100% { opacity: 0.45; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.25); }
+}
+.pop-title {
+  font: 900 38px/0.9 var(--display);
+  font-stretch: 62%;
+  letter-spacing: 0.005em;
+}
+.pop-text {
+  font: 400 14px/1.45 var(--mono);
+}
+.pop-input {
+  height: 56px;
+  padding: 0 16px;
+  border-radius: 14px;
+  border: 3px solid #0d0d0d;
+  background: #fff;
+  color: #0d0d0d;
+  font: 700 18px/1 var(--mono);
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.pop-input:focus {
+  box-shadow: 0 0 0 4px rgba(13, 13, 13, 0.25);
+}
+.pop-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.pop-btn {
+  flex: 1;
+  min-height: 54px;
+  padding: 0 12px;
+  border-radius: 16px;
+  border: 3px solid var(--pop-ink);
+  color: var(--pop-ink);
+  font: 900 18px/1 var(--display);
+  font-stretch: 75%;
+  letter-spacing: 0.02em;
+  transition: transform 0.15s var(--bounce), box-shadow 0.15s, opacity 0.2s;
+}
+.pop-btn.primary {
+  background: var(--pop-ink);
+  color: var(--pop-bg);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.35);
+}
+.pop-btn:active {
+  transform: translateY(4px);
+  box-shadow: none;
+}
+.pop-btn:disabled {
+  opacity: 0.35;
+}
+.pop-card.is-danger {
+  border-color: #ff1f3d;
+  box-shadow: 8px 8px 0 #ff1f3d, 0 0 60px rgba(255, 31, 61, 0.35);
+}
+.pop-card.is-danger .pop-title {
+  color: #ff4d63;
+}
+.danger-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.danger-text {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 31, 61, 0.14);
+  border: 2px solid #ff4d63;
+  color: #ff6b7e;
+  font: 700 14px/1.4 var(--mono);
+}
+.pop-card.is-danger .pop-input {
+  border-color: #ff1f3d;
+  background: #fff4f5;
+}
+.pop-btn.danger,
+.pop-btn.primary.danger {
+  background: #ff1f3d;
+  border-color: #ff1f3d;
+  color: #fff;
+}

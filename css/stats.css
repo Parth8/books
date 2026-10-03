@@ -1,0 +1,243 @@
+/* Bento */
+.bento {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.tile {
+  position: relative;
+  min-height: 150px;
+  padding: 14px;
+  border-radius: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+  background: var(--night-2);
+  color: var(--white);
+}
+.tile small {
+  font: 700 10px/1.2 var(--mono);
+  letter-spacing: 0.12em;
+}
+.tile .t-foot {
+  margin-top: auto;
+  font: 700 10px/1.2 var(--mono);
+  letter-spacing: 0.1em;
+}
+.span2 {
+  grid-column: span 2;
+}
+.huge {
+  font: 900 120px/0.8 var(--display);
+  font-stretch: 62%;
+  letter-spacing: -0.02em;
+}
+.big {
+  font: 900 64px/0.85 var(--display);
+  font-stretch: 62%;
+  margin-top: auto;
+}
+.t-level {
+  background: var(--blue);
+  min-height: 210px;
+}
+.t-level .huge {
+  position: absolute;
+  right: 12px;
+  top: 6px;
+}
+.t-title {
+  margin-top: auto;
+  font: 900 28px/0.9 var(--display);
+  font-stretch: 70%;
+}
+.t-bar {
+  height: 12px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+  margin: 8px 0 6px;
+}
+.t-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lime);
+  box-shadow: 0 0 12px var(--lime);
+}
+.t-level .t-foot {
+  margin-top: 0;
+}
+.t-streak {
+  background: var(--orange);
+  color: var(--ink);
+}
+.t-books {
+  background: var(--yellow);
+  color: var(--ink);
+}
+.t-pages {
+  background: #d91d16;
+}
+.t-eggs {
+  background: var(--cyan);
+  color: var(--ink);
+}
+.t-xp {
+  background: var(--paper);
+  color: var(--ink);
+}
+.t-week {
+  min-height: 170px;
+}
+.wbars {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  align-items: end;
+  margin-top: 10px;
+}
+.wb {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+.wb i {
+  width: 100%;
+  height: var(--h);
+  border-radius: 8px;
+  background: #3a3a3a;
+}
+.wb.hit i {
+  background: var(--lime);
+  box-shadow: 0 0 10px rgba(231, 255, 61, 0.5);
+}
+.wb.today i {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.wb small {
+  font-size: 10px;
+  color: #8a8a8a;
+}
+.t-dial {
+  align-items: center;
+  touch-action: none;
+  cursor: grab;
+  background: var(--night-2);
+}
+.dial-svg {
+  width: 116px;
+  height: 116px;
+  overflow: visible;
+}
+.dial-svg .tick {
+  stroke: #555;
+  stroke-width: 1.5;
+}
+.dial-svg .trk {
+  fill: none;
+  stroke: #2e2e2e;
+  stroke-width: 9;
+}
+.dial-svg .arc {
+  fill: none;
+  stroke: var(--orange);
+  stroke-width: 9;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s var(--spring), stroke 0.3s;
+}
+.t-dial.done .arc {
+  stroke: var(--lime);
+  filter: drop-shadow(0 0 6px var(--lime));
+}
+.dial-svg .handle {
+  fill: #fff;
+  stroke: var(--ink);
+  stroke-width: 3;
+  transition: r 0.2s;
+}
+.t-dial.grab .handle {
+  r: 10px;
+}
+.dial-in {
+  position: absolute;
+  top: 14px;
+  height: 116px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+}
+.dial-n {
+  font: 900 40px/0.9 var(--display);
+  font-stretch: 62%;
+}
+.dial-of {
+  color: #8a8a8a;
+}
+.t-dial .t-foot {
+  text-align: center;
+  font-size: 9px;
+}
+.p-h {
+  margin: 22px 4px 12px;
+  font: 900 32px/0.9 var(--display);
+  font-stretch: 62%;
+}
+.badges {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.mini {
+}
+.mini-paper {
+  --hole: 3.5px;
+  --step: 10px;
+  aspect-ratio: 0.8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 8px;
+  text-align: center;
+  background: #2a2a2a;
+  color: #777;
+  -webkit-mask:
+    radial-gradient(circle var(--hole) at calc(var(--step) / 2) calc(var(--step) / 2), #0000 98%, #000) calc(var(--step) / -2) calc(var(--step) / -2) / var(--step) var(--step) round,
+    linear-gradient(#000 0 0) center / calc(100% - var(--step)) calc(100% - var(--step)) no-repeat;
+  mask:
+    radial-gradient(circle var(--hole) at calc(var(--step) / 2) calc(var(--step) / 2), #0000 98%, #000) calc(var(--step) / -2) calc(var(--step) / -2) / var(--step) var(--step) round,
+    linear-gradient(#000 0 0) center / calc(100% - var(--step)) calc(100% - var(--step)) no-repeat;
+}
+.mini.got .mini-paper {
+  background: var(--paper);
+  color: var(--ink);
+}
+.mini:nth-child(3n + 1).got .mini-paper { background: var(--yellow); }
+.mini:nth-child(3n + 2).got .mini-paper { background: var(--paper); }
+.mini:nth-child(3n).got .mini-paper { background: var(--cyan); }
+.mini-e {
+  font-size: 30px;
+  line-height: 1;
+}
+.mini b {
+  font: 900 15px/0.95 var(--display);
+  font-stretch: 70%;
+}
+.mini small {
+  font: 400 8px/1.2 var(--mono);
+}
+.p-actions {
+  margin-top: 22px;
+  grid-template-columns: 1fr 1fr;
+}

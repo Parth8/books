@@ -26,8 +26,39 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="preload" href="fonts/archivo-100-900.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/spacemono-700.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css">
-  <script type="module" src="js/main.js"></script>
+  <!-- Styles, one file per part of the screen. Order matters: later files refine earlier ones. -->
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/hud.css">
+  <link rel="stylesheet" href="css/stage.css">
+  <link rel="stylesheet" href="css/deck.css">
+  <link rel="stylesheet" href="css/dock.css">
+  <link rel="stylesheet" href="css/panel.css">
+  <link rel="stylesheet" href="css/stats.css">
+  <link rel="stylesheet" href="css/search.css">
+  <link rel="stylesheet" href="css/island.css">
+  <link rel="stylesheet" href="css/poster.css">
+  <link rel="stylesheet" href="css/juice.css">
+  <link rel="stylesheet" href="css/tutorial.css">
+  <link rel="stylesheet" href="css/popups.css">
+  <link rel="stylesheet" href="css/tips.css">
+  <link rel="stylesheet" href="css/critters.css">
+  <link rel="stylesheet" href="css/stickers.css">
+  <link rel="stylesheet" href="css/import.css">
+  <link rel="stylesheet" href="css/idle.css">
+  <link rel="stylesheet" href="css/install.css">
+  <link rel="stylesheet" href="css/chai.css">
+  <link rel="stylesheet" href="css/forms.css">
+  <link rel="stylesheet" href="css/account.css">
+  <link rel="stylesheet" href="css/me.css">
+  <link rel="stylesheet" href="css/levers.css">
+  <link rel="stylesheet" href="css/arcade.css">
+  <link rel="stylesheet" href="css/tickets.css">
+  <link rel="stylesheet" href="css/profile.css">
+  <link rel="stylesheet" href="css/lights.css">
+  <link rel="stylesheet" href="css/motion.css">
+  <link rel="stylesheet" href="css/layers.css">
+  <script type="module" src="app/boot.js"></script>
 </head>
 <body data-shelf="reading">
   <div class="grain" aria-hidden="true"></div>

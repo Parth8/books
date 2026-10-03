@@ -1,0 +1,176 @@
+/* ============================================================
+   Arcade passes: books are tickets now, not white stamps
+   ============================================================ */
+.paper.ticket {
+  --stub: calc(var(--sw) * 0.17);
+  --notch: calc(var(--sw) * 0.045);
+  background:
+    /* faint printed guilloche lines, like real ticket stock */
+    repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.035) 0 2px, transparent 2px 7px),
+    var(--stock, #e7ff3d);
+  color: #0d0d0d;
+  border-radius: calc(var(--sw) * 0.06);
+  padding: calc(var(--sw) * 0.055) calc(var(--sw) * 0.06) 0;
+  gap: calc(var(--sw) * 0.03);
+  -webkit-mask: none;
+  mask: none;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.75), inset 0 0 0 5px rgba(255, 255, 255, 0.35);
+}
+/* A holographic foil strip down the left edge */
+.tk-foil {
+  position: absolute;
+  top: 0;
+  bottom: var(--stub);
+  left: calc(var(--sw) * 0.022);
+  width: calc(var(--sw) * 0.022);
+  background: linear-gradient(180deg, #ff6ad5, #ffd60a, #7dffb0, #25c7ff, #b49bff, #ff6ad5);
+  opacity: 0.85;
+  border-radius: 2px;
+}
+.ticket .stamp-top {
+  align-items: center;
+  padding-left: calc(var(--sw) * 0.03);
+}
+.ticket .issuer {
+  align-items: flex-start;
+  gap: 2px;
+}
+.ticket .issuer b {
+  font: 900 calc(var(--sw) * 0.068) / 1 var(--display);
+  font-stretch: 70%;
+  letter-spacing: 0.04em;
+}
+.ticket .issuer small {
+  font: calc(var(--sw) * 0.032) / 1 var(--pixel);
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+.ticket .denom {
+  padding: 3px 6px 2px;
+  border-radius: 6px;
+  background: #0d0d0d;
+  color: var(--stock, #e7ff3d);
+}
+.ticket .denom b {
+  font-size: calc(var(--sw) * 0.13);
+}
+.ticket .win {
+  border-radius: calc(var(--sw) * 0.03);
+  box-shadow: 0 0 0 2px #0d0d0d, 0 0 0 4px rgba(255, 255, 255, 0.4);
+  margin-left: calc(var(--sw) * 0.03);
+}
+.ticket .cap {
+  padding-left: calc(var(--sw) * 0.03);
+}
+/* The stub: a dashed tear line, then a serial number and a barcode */
+.ticket:has(.tk-punch) .tk-stub { padding-left: calc(var(--sw) * 0.12); }
+.tk-stub {
+  position: relative;
+  flex: none;
+  height: var(--stub);
+  margin: auto calc(var(--sw) * -0.06) 0;
+  padding: 0 calc(var(--sw) * 0.08);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: calc(var(--sw) * 0.04);
+  border-top: 2px dashed rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.06);
+  font: calc(var(--sw) * 0.036) / 1 var(--pixel);
+  letter-spacing: 0.04em;
+}
+.tk-serial small { opacity: 0.6; }
+.tk-code {
+  display: block;
+  height: 55%;
+  min-width: 0;
+}
+.tk-code svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: #0d0d0d;
+}
+.tk-shelf {
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: #0d0d0d;
+  color: var(--stock, #e7ff3d);
+}
+/* Finished: a hole punched through the stub, and a red rubber stamp */
+.tk-punch {
+  position: absolute;
+  left: calc(var(--sw) * 0.022);
+  bottom: calc(var(--stub) * 0.5 - var(--sw) * 0.035);
+  width: calc(var(--sw) * 0.07);
+  height: calc(var(--sw) * 0.07);
+  border-radius: 50%;
+  background: var(--tone, #0d0d0d);
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.5);
+}
+.ticket .postmark {
+  right: 4%;
+  top: 38%;
+  transform: rotate(-12deg);
+}
+.ticket .pm-ring {
+  width: auto;
+  height: auto;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border-width: 3px;
+  background: rgba(255, 255, 255, 0.55);
+}
+/* The back: fine print */
+.ticket.back-side {
+  padding: calc(var(--sw) * 0.07) calc(var(--sw) * 0.07) calc(var(--sw) * 0.05);
+  gap: 6px;
+  overflow: hidden;
+  -webkit-mask: none;
+  mask: none;
+}
+.tk-terms {
+  font: calc(var(--sw) * 0.03) / 1.3 var(--pixel);
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+.ticket .facts {
+  border-color: #0d0d0d;
+  border-top-style: dashed;
+  border-bottom-style: dashed;
+}
+.tk-buy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #0d0d0d;
+  color: var(--stock, #e7ff3d);
+  text-decoration: none;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+.tk-buy b {
+  flex: 1;
+  font: 900 calc(var(--sw) * 0.075) / 1 var(--display);
+  font-stretch: 70%;
+}
+.tk-buy:active { transform: translateY(2px); box-shadow: none; }
+/* The + pass: insert coin */
+.stamp.add .paper.ticket {
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0 2px, transparent 2px 7px), #0d0d0d;
+  color: #fff;
+  box-shadow: inset 0 0 0 2px var(--lime), inset 0 0 22px rgba(231, 255, 61, 0.25);
+  padding-bottom: var(--stub);
+}
+.add-coin {
+  font: calc(var(--sw) * 0.045) / 1 var(--pixel);
+  color: var(--lime);
+  letter-spacing: 0.1em;
+  animation: coin-blink 1.2s steps(1) infinite;
+}
+@keyframes coin-blink {
+  50% { opacity: 0.15; }
+}
+.panel-up .add-coin { animation-play-state: paused; }

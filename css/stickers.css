@@ -1,0 +1,31 @@
+/* Stickers: earned badges peel off the sheet as die-cut stickers */
+.mini.got .mini-paper {
+  -webkit-mask: none;
+  mask: none;
+  border-radius: 24px;
+  box-shadow: 0 0 0 5px #fff, 0 10px 18px rgba(0, 0, 0, 0.45);
+  transform: rotate(var(--rot, -3deg));
+  position: relative;
+  overflow: hidden;
+}
+.mini.got:nth-child(2n) .mini-paper { --rot: 4deg; }
+.mini.got:nth-child(3n) .mini-paper { --rot: -5deg; }
+.mini.got:nth-child(5n) .mini-paper { --rot: 2deg; }
+.mini.got .mini-paper::after {
+  /* the peeling corner */
+  content: "";
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 26px;
+  height: 26px;
+  background: linear-gradient(225deg, #f0f0f0 50%, rgba(0, 0, 0, 0.25) 50%, transparent 70%);
+  border-bottom-left-radius: 10px;
+}
+.mini.got .mini-e {
+  font-size: 34px;
+}
+.badges {
+  gap: 16px 12px;
+  padding: 6px;
+}

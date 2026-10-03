@@ -1,0 +1,87 @@
+/* ============================================================
+   Profile: animal carousel, name, @username
+   ============================================================ */
+.ava-picker {
+  position: relative;
+  margin: 0 -18px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ava-strip {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  /* room either side, so the first and last can sit in the middle */
+  padding: 22px calc(50% - 44px) 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+.ava-strip::-webkit-scrollbar { display: none; }
+.ava {
+  flex: none;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  scroll-snap-align: center;
+  font: 900 44px/1 var(--display);
+  color: #0d0d0d;
+  background: radial-gradient(circle at 35% 28%, #fff9 0 12%, transparent 36%), linear-gradient(160deg, #3a3a3a, #1b1b1b);
+  border: 3px solid #0d0d0d;
+  box-shadow: 0 6px 0 #000, inset 0 -4px 8px rgba(0, 0, 0, 0.5);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.ava span { display: block; }
+.ava.on {
+  background: radial-gradient(circle at 35% 28%, #fff9 0 12%, transparent 36%), linear-gradient(160deg, #ff8ae0, #c935ab);
+  box-shadow: 0 6px 0 #7d1f6a, 0 0 28px rgba(255, 106, 213, 0.55), inset 0 -4px 8px rgba(0, 0, 0, 0.25);
+}
+.ava-arrow {
+  position: absolute;
+  top: 46px;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font: 900 26px/1 var(--display);
+  color: var(--lime);
+  background: #141414;
+  border: 2px solid #2a2a2a;
+}
+.ava-arrow.prev { left: 22px; }
+.ava-arrow.next { right: 22px; }
+.ava-arrow:active { transform: scale(0.92); }
+.ava-name {
+  font: 10px/1 var(--pixel);
+  letter-spacing: 0.12em;
+  color: var(--lime);
+}
+.me-id {
+  align-items: center;
+  text-align: center;
+  margin-bottom: 6px;
+}
+.me-id .me-name {
+  max-width: 100%;
+}
+.me-handle {
+  font: 700 13px/1.2 var(--mono);
+  color: var(--cyan);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.me-id-links {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
