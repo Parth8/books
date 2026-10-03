@@ -202,6 +202,12 @@ export function amazonUrl(book) {
   return `https://www.amazon.in/s?k=${encodeURIComponent(q)}`;
 }
 
+/**
+ * How much to shrink a title so it fits: 1 for short titles, down to 0.5 for very long ones
+ * (by area, so a title twice as long gets ~0.7 the size and room for twice the words).
+ */
+export const titleFit = (title = "", room = 16) => Math.max(0.5, Math.min(1, Math.sqrt(room / Math.max(1, String(title).length))));
+
 /** A book as an arcade pass, front and back. */
 export function bookStamp(book, { tone } = {}) {
   const [bg, a] = paletteOf(book.seed);
@@ -265,7 +271,7 @@ export function bookStamp(book, { tone } = {}) {
       "data-id": book.id,
       tabIndex: -1,
       "aria-label": `${book.title}${book.author ? ` by ${book.author}` : ""}${book.shelf === "reading" ? `, page ${book.page} of ${book.pages}` : ""}`,
-      vars: { "--c1": a, "--cbg": bg, "--tone": tone || a, "--stock": stockOf(book.seed, tone) },
+      vars: { "--c1": a, "--cbg": bg, "--tone": tone || a, "--stock": stockOf(book.seed, tone), "--fit": titleFit(book.title).toFixed(2), "--fit-back": titleFit(book.title, 28).toFixed(2) },
     },
     h("i", { class: "stamp-shadow", "aria-hidden": "true" }),
     h("div", { class: "flipper" }, front, back),

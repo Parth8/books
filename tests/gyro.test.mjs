@@ -88,6 +88,14 @@ test("tipping the top edge away and back: next shelf; towards you: the one befor
   assert.deepEqual(r.out, ["shelfPrev"]);
 });
 
+test("one tip, one shelf: an overshoot on the way back never counts as a second tip", () => {
+  const read = gestureReader();
+  // Tip away and back, then (still within a second) a sharp snap back towards you as the
+  // phone overshoots, and a wobble: one shelf.
+  const seq = [...rest(40), ...lobe(-600, 12), ...lobe(300, 14), ...rest(25), ...lobe(600, 10), ...lobe(-300, 14), ...rest(60)];
+  assert.deepEqual(play(read, seq, 0, "x").out, ["shelfNext"]);
+});
+
 test("a slow twist (tilting to play with the light) is never a gesture", () => {
   const read = gestureReader();
   // 200°/s at most, ~75° over 0.6 s, and back.

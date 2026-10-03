@@ -76,10 +76,9 @@ function motionGesture(name) {
     }
   };
   if (name === "next" || name === "prev") {
-    const to = deck.index + (name === "next" ? 1 : -1);
-    if (to < 0 || to >= deck.ids().length) return feel("error", "warning");
+    // Flick right: the top pass flies off to the right, uncovering the next one.
+    if (!deck.toss(name === "next" ? 1 : -1)) return feel("error", "warning");
     feel("swoosh", "medium");
-    deck.go(to, { x: name === "next" ? -900 : 900 });
     say("📳", name === "next" ? "FLICK! NEXT BOOK" : "FLICK! BACK ONE");
   } else if (name === "shelfNext" || name === "shelfPrev") {
     const k = ORDER.indexOf(shelf);

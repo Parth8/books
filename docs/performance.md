@@ -57,7 +57,7 @@ The rules come from two recordings of real moves on an iPhone, made with a hidde
 - A bounce is two pushes in opposite directions (each above 5.5 m/s² and long enough to really move the phone) within 0.45 s, while the phone hardly turns. The recordings had firm bounces (11–22 m/s²) and gentle ones (6–11).
 - Setting the phone down, or knocking it, is one short spike, so it doesn't count.
 
-After any move, Shelfie waits until the phone is calm for a moment, so the swing back never counts.
+After any move, Shelfie waits until the phone is calm for a moment, so the swing back never counts. Shelf changes are at least 0.9 s apart: a tip's swing back can overshoot into a snap the other way.
 
 **Tilt** comes from which way gravity points, not from the orientation event's angles. Those are Euler angles: when you hold the phone upright they jump (one swings by 180°), which made the pile lurch. The bulbs are pendulums: a small spring, stepped by real time, that runs only while they're moving.
 

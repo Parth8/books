@@ -5,9 +5,11 @@
   position: absolute;
   left: 50%;
   top: 50%;
+  /* The pile makes passes taller (book-shaped) where it has room: see .deck .stamp. */
+  --sh: calc(var(--sw) * 1.38);
   width: var(--sw);
-  height: calc(var(--sw) * 1.38);
-  margin: calc(var(--sw) * -0.69 - 8px) 0 0 calc(var(--sw) * -0.5);
+  height: var(--sh);
+  margin: calc(var(--sh) * -0.5 - 8px) 0 0 calc(var(--sw) * -0.5);
   perspective: 1400px;
   -webkit-user-select: none;
   user-select: none;
@@ -48,6 +50,15 @@
 }
 .face.back {
   transform: rotateY(180deg);
+}
+/* The face turned away is hidden outright, halfway through the flip: Safari draws some things
+   (the red READ stamp's ink blend, for one) through backface-visibility, mirrored. */
+.face {
+  transition: visibility 0s 0.18s;
+}
+.stamp:not(.flipped) .face.back,
+.stamp.flipped .face.front {
+  visibility: hidden;
 }
 .paper {
   --hole: 5px;
@@ -174,13 +185,14 @@
   left: 9%;
   right: 9%;
   bottom: 8%;
-  font: 900 calc(var(--sw) * 0.115) / 0.9 var(--display);
+  /* --fit shrinks long titles so they fit whole (js/stamp.js titleFit) */
+  font: 900 calc(var(--sw) * 0.115 * var(--fit, 1)) / 0.9 var(--display);
   font-stretch: 62%;
   text-transform: uppercase;
   color: #fff;
   text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -219,12 +231,12 @@
   min-height: 0;
 }
 .cap b {
-  font: 900 calc(var(--sw) * 0.088) / 0.92 var(--display);
+  font: 900 calc(var(--sw) * 0.088 * max(var(--fit, 1), 0.7)) / 0.92 var(--display);
   font-stretch: 66%;
   text-transform: uppercase;
   letter-spacing: 0.005em;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -294,7 +306,8 @@
   overflow: hidden;
 }
 .back-title {
-  font: 900 calc(var(--sw) * 0.1) / 0.92 var(--display);
+  flex: none;
+  font: 900 calc(var(--sw) * 0.1 * var(--fit-back, 1)) / 0.92 var(--display);
   font-stretch: 66%;
   text-transform: uppercase;
 }
@@ -323,12 +336,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The blurb takes whatever room is left, and fades out if it runs over; everything else on the
+   back keeps its size, so the Amazon button and the hint are never cut off. */
 .blurb {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 0;
+  position: relative;
   font: 400 10px/1.35 var(--mono);
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 6;
-  -webkit-box-orient: vertical;
+}
+/* (a fade painted in the ticket's colour, not a mask: masks cost a pass on every frame the card moves) */
+.blurb::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 2.7em;
+  background: linear-gradient(transparent, var(--stock, var(--white)));
+}
+.back .paper > :not(.blurb) {
+  flex: none;
 }
 .back-hint {
   margin-top: auto;

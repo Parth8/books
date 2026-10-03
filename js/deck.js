@@ -93,6 +93,44 @@ export function createDeck(root, opts) {
 
   const top = () => items[i];
 
+  /**
+   * For motion gestures: the top pass is tossed off to the right, uncovering the next one
+   * (dir 1), or the one before comes back in from the right (dir -1). False at either end.
+   */
+  const OFF_RIGHT = () => ({ x: W * 1.6, y: 24, r: 22, s: 0.95, o: 1 });
+  function toss(dir) {
+    if (dir > 0) {
+      if (i >= items.length - 1) return false;
+      const out = items[i];
+      i++;
+      buzz(6);
+      out.el.style.zIndex = "300";
+      out.el.inert = true;
+      out.el.classList.remove("top");
+      out.m.to(OFF_RIGHT(), { x: 1100, r: 60 });
+      layout(0, { except: out });
+      opts.onIndex?.(top().id, i);
+      // Once it's off screen it joins the passed ones (off to the left, where swipes put them).
+      setTimeout(() => {
+        const j = items.indexOf(out);
+        if (j >= 0 && j < i && out.el) {
+          out.m.jump(slotPos(j - i));
+          out.el.style.zIndex = String(200 - (j - i) * 2);
+        }
+      }, 420);
+      return true;
+    }
+    if (i <= 0) return false;
+    const back = items[i - 1];
+    materialise(back, OFF_RIGHT());
+    back.m.jump(OFF_RIGHT());
+    i--;
+    buzz(6);
+    layout(0, { velocity: { x: -900 } });
+    opts.onIndex?.(top().id, i);
+    return true;
+  }
+
   function go(to, velocity = {}) {
     const from = i;
     i = clamp(to, 0, items.length - 1);
@@ -408,6 +446,7 @@ export function createDeck(root, opts) {
   return {
     set,
     go,
+    toss,
     get index() {
       return i;
     },

@@ -59,7 +59,7 @@ Switch on You → Settings → **Motion controls** (iPhone asks for permission, 
 
 | Move | What it does |
 |---|---|
-| **Flick** the phone right / left and straight back: turn it to face right, or snap it clockwise like a dial | Next / previous book |
+| **Flick** the phone right / left and straight back: turn it to face right, or snap it clockwise like a dial | Next book (the top pass flies off to the right) / previous book (it comes back from the right) |
 | **Tip** the top edge away from you and back / towards you and back | Next / previous shelf |
 | **Bounce** it: a quick bounce up and down | Add a book |
 | **Tilt** | The pile leans in 3D, the background shifts the other way, the fairy lights lean, the bulbs swing like pendulums, and a hotspot of light slides across the cover |
@@ -67,7 +67,7 @@ Switch on You → Settings → **Motion controls** (iPhone asks for permission, 
 - **Learning the moves.** A guide with little animated phones shows each move. The first couple of times you use a move, the island says what it did.
 - **Every move is a snap and back.** Slow turns (tilting to play with the light, twisting slowly, turning round as you walk) are never moves.
 - **Both kinds of flick.** Asked to flick right, people either turn the phone to face right or snap it clockwise; the recordings had one of each. Both work.
-- **One move, one step.** After each move Shelfie waits for the phone to calm down for a moment, so the swing back or the bounce back never counts again. Moves about a second apart each count.
+- **One move, one step.** After each move Shelfie waits for the phone to calm down for a moment, so the swing back or the bounce back never counts again. Moves about a second apart each count. Shelves change at most once every 0.9 s, because a tip's swing back can overshoot into what looks like a tip the other way.
 - **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open; while the phone is being picked up or put down; and for 1.5 s after it lay still face up (on a table).
 - **Tuned on real moves.** Two recordings from an iPhone (`tests/fixtures/motion-iphone*.json`); the tests replay them. How moves are read: [performance.md](performance.md#motion-gestures).
 - **Tilt follows the phone.** "Level" is how you've held the phone over the last few seconds, so the scene answers to its position and still settles when you change grip for good. Big tilts ease to the edge rather than stopping dead.

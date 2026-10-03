@@ -107,11 +107,13 @@ export function gestureReader({
   settle = 150,
   quiet = 40,
   gap = 350,
+  shelfGap = 900, // ms at least between two shelf changes (either way)
 } = {}) {
   let last = 0;
   let armed = true;
   let firedAt = -1e9;
   let still = 0;
+  let lastSnap = null; // { k, s, t }: the last snap that fired
   const downs = []; // [t, unit gravity]: the last second of where down was
   let restedAt = -1e9; // when the phone last lay still, face up
   let restFrom = 0;
@@ -211,13 +213,19 @@ export function gestureReader({
         return o && end >= snap.t && o.t <= snap.end && Math.abs(o.ang) > snap.ang;
       });
       snaps[k] = null;
-      if (!bigger) {
+      // One tip, one shelf: a tip's swing back can overshoot into what looks like a tip the
+      // other way (or a second wobble), so shelves change at most about once a second.
+      const echo = k === "x" && lastSnap?.k === "x" && t - lastSnap.t < shelfGap;
+      if (!bigger && !echo) {
         const now = downAt(t);
         // A turn can only move "down" by as much as it turned: if it moved much further, the
         // phone was also being picked up or put down.
         const moved = snap.g && now ? angle(snap.g, now) : 0;
         const home = moved < snap.ang - Math.abs(lobes[k].ang) + drift;
-        if (snap.ok && home) return fire(meaning[k](snap.s));
+        if (snap.ok && home) {
+          lastSnap = { k, s: snap.s, t };
+          return fire(meaning[k](snap.s));
+        }
       }
     }
 

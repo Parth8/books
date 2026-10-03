@@ -97,6 +97,7 @@ async function run(name, fn, { motion = "reduce", google = "ok", allow = null, t
     } catch (err) {
       failures++;
       console.log(`FAIL ${name}\n     ${err.message.split("\n").slice(0, 8).join("\n     ")}`);
+    if (process.env.STACK) console.log(err.stack.split("\n").filter((l) => l.includes("e2e.mjs")).join("\n"));
     }
     return;
   }
@@ -116,6 +117,7 @@ async function run(name, fn, { motion = "reduce", google = "ok", allow = null, t
   } catch (err) {
     failures++;
     console.log(`FAIL ${name}\n     ${err.message.split("\n").slice(0, 8).join("\n     ")}`);
+    if (process.env.STACK) console.log(err.stack.split("\n").filter((l) => l.includes("e2e.mjs")).join("\n"));
   } finally {
     await ctx.close();
   }
@@ -959,8 +961,21 @@ await run("motion controls: flick for books, tip for shelves, bounce to add, til
       setTimeout(() => (clearInterval(id), ok()), 900);
     }));
     const first = (await app(page)).top;
+    // Watch how far right the top pass goes (it's only off to the right for a moment).
+    await page.evaluate((id) => {
+      globalThis.__maxX = -1e9;
+      const t0 = performance.now();
+      const tick = () => {
+        const m = /translate3d\((-?[\d.]+)px/.exec(document.querySelector(`.stamp[data-id="${id}"]`)?.style.transform || "");
+        if (m) globalThis.__maxX = Math.max(globalThis.__maxX, +m[1]);
+        if (performance.now() - t0 < 3000) requestAnimationFrame(tick);
+      };
+      tick();
+    }, first);
     await flick(600);
     await page.waitForFunction((t) => globalThis.__shelfie.top !== t, first);
+    // Flick right: the top pass flies off to the right.
+    await page.waitForFunction(() => globalThis.__maxX > 150);
     await still();
     await flick(-600);
     await page.waitForFunction((t) => globalThis.__shelfie.top === t, first);

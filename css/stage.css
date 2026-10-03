@@ -65,10 +65,14 @@ body.lifting .stage-bg::after { display: block; }
   position: absolute;
   /* The bottom band is kept free for the hint chip, so it never covers a book. */
   inset: 22px 0 58px;
-  --sw: clamp(88px, min(62cqw, 250px, calc((100cqh - 100px) / 1.38)), 250px);
+  /* Passes are book-shaped: at least 1.5 × as tall as wide (narrower if the height is short). */
+  --sw: clamp(88px, min(62cqw, 250px, calc((100cqh - 100px) / 1.5)), 250px);
   touch-action: none;
   outline: none;
   transform: translateX(calc(var(--sw) * -0.08));
+}
+.deck .stamp {
+  --sh: max(calc(var(--sw) * 1.5), min(calc(var(--sw) * 1.62), calc(100cqh - 120px)));
 }
 .deck:focus-visible {
   outline: 3px solid var(--lime);
