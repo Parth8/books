@@ -42,26 +42,26 @@ The point of these rules is to keep every effect, not to cut them. Each effect i
 
 ## Motion gestures
 
-The rules come from recordings of real moves on an iPhone, made with a hidden test page (`motion-lab.html`, removed before launch). The recording is kept as a test fixture, `tests/fixtures/motion-iphone.json`, and the tests replay it.
+The rules come from two recordings of real moves on an iPhone, made with a hidden test page (`motion-lab.html`, removed before launch). They're kept as test fixtures (`tests/fixtures/motion-iphone.json`, `motion-iphone-2.json`), and the tests replay every step of both.
 
-**Flick (next / previous book)** comes from the **gyroscope** (how fast the phone turns), which is clean and immediate.
+**Snaps (books and shelves)** come from the **gyroscope** (how fast the phone turns), which is clean and immediate.
 
-1. Shelfie follows the turn about the phone's top-to-bottom axis.
-2. A flick is at least 40° of turn, peaking above 280°/s. In the recording real flicks were 53–119° at 290–890°/s; normal handling stayed under 25°.
-3. It fires as the swing back starts (about 15° into it), roughly a quarter of a second after the flick began.
-4. The other axes are ignored: a flick to the left also tips the phone's top towards you by 60–80% as much.
-5. Picking the phone up or putting it down turns it the same way. So a flick only counts if the phone was held fairly steady (within 40°) over the half second before.
+1. Shelfie follows the turn about each of the phone's three axes, one stretch of turning one way at a time.
+2. A snap is at least 38° of turn, peaking above 280°/s, within 0.4 s. In the recordings, real snaps were 45–119° at 290–890°/s in 0.1–0.3 s. Slow twists and tilts stayed under 280°/s and took 0.5–1 s; normal handling stayed under 25°.
+3. It fires as the swing back starts (about 15° into it), roughly a quarter of a second after the snap began.
+4. Which axis: turning to face right (top-to-bottom axis) or snapping clockwise (through the screen) is next book; tipping the top away (side-to-side axis) is next shelf. Wrists turn about more than one axis at once (a flick to the left also tips the top by 60–80% as much), so the axis that turned furthest wins.
+5. Picking the phone up or putting it down turns it the same way. So a snap only counts if the phone is held about the same way as half a second before, and not within 1.5 s of lying still face up.
 
 **Bounce (add a book)** comes from the **accelerometer**, measured along gravity so it works however you hold the phone.
 
-- A bounce is two strong pushes in opposite directions (each above 9 m/s² and long enough to really move the phone) within 0.45 s, while the phone hardly turns.
+- A bounce is two pushes in opposite directions (each above 5.5 m/s² and long enough to really move the phone) within 0.45 s, while the phone hardly turns. The recordings had firm bounces (11–22 m/s²) and gentle ones (6–11).
 - Setting the phone down, or knocking it, is one short spike, so it doesn't count.
 
-After any move, Shelfie waits until the phone is calm again, so the swing back never counts.
+After any move, Shelfie waits until the phone is calm for a moment, so the swing back never counts.
 
-**Tilt** comes from which way gravity points, not from the orientation event's angles. Those angles are Euler angles: when you hold the phone upright they jump (one swings by 180°), which made the pile lurch.
+**Tilt** comes from which way gravity points, not from the orientation event's angles. Those are Euler angles: when you hold the phone upright they jump (one swings by 180°), which made the pile lurch. The bulbs are pendulums: a small spring, stepped by real time, that runs only while they're moving.
 
-The reader is a pure function (`gestureReader` in `js/gyro.js`). The tests replay the recording and check each step: every flick right gives "next", every flick left "previous", bouncing gives "add". Holding the phone still, slow tilting, walking, putting it down and picking it up, scrolling, and the dropped twist and tip moves give nothing.
+The reader is a pure function (`gestureReader` in `js/gyro.js`). For each recording, every flick, tip and bounce step must give only its own gesture. Holding still, slow tilting, slow twisting, walking, putting the phone down and picking it up, and scrolling must give nothing.
 
 ## What can't be measured here
 

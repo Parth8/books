@@ -37,12 +37,18 @@
   background: var(--pink);
 }
 .mo-phone.flick { animation: mo-flick 1.6s cubic-bezier(.5, 0, .2, 1) infinite; }
+.mo-phone.tipping { animation: mo-tip 1.6s cubic-bezier(.5, 0, .2, 1) infinite; }
 .mo-phone.lift { animation: mo-lift 1.6s cubic-bezier(.5, 0, .2, 1) infinite; }
 .mo-phone.tilt { animation: mo-tilt 3s ease-in-out infinite alternate; }
 @keyframes mo-flick {
   0%, 30%, 100% { transform: perspective(200px); }
   45% { transform: perspective(200px) rotateY(50deg); }
   62% { transform: perspective(200px) rotateY(-6deg); }
+}
+@keyframes mo-tip {
+  0%, 30%, 100% { transform: perspective(200px); }
+  45% { transform: perspective(200px) rotateX(50deg); }
+  62% { transform: perspective(200px) rotateX(-6deg); }
 }
 @keyframes mo-lift {
   0%, 30%, 100% { transform: none; }

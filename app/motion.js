@@ -1,4 +1,4 @@
-// Motion controls: tilt the phone and the scene moves; flicks and bounces are gestures (js/gyro.js reads them).
+// Motion controls: tilt the phone and the scene moves; flicks, tips and bounces are gestures (js/gyro.js reads them).
 
 import { h, $, buzz, prefersReducedMotion } from "../js/util.js";
 import { feel, fx } from "../js/sfx.js";
@@ -6,7 +6,7 @@ import { popup } from "../js/modal.js";
 import { tip } from "../js/tips.js";
 import { createGyro, motionSupported, askMotion } from "../js/gyro.js";
 import { add, openAdd, row } from "./adding.js";
-import { book, deck, deckEl, island, opensSoFar } from "./boot.js";
+import { book, deck, deckEl, island, opensSoFar, ORDER, SHELF, shelf, switchShelf } from "./boot.js";
 import { posterUp } from "./celebrate.js";
 import { fairy, start } from "./dock.js";
 import { imp } from "./import.js";
@@ -21,7 +21,6 @@ const stageBg = $(".stage-bg");
  * swing and the light on the cover slides. All of it is transforms on elements that already have
  * their own layer, so the GPU just moves pictures about; nothing is re-laid out or repainted.
  */
-let swung = 0;
 function applyTilt(x, y) {
   // The pile leans in 3D about an axis at right angles to the tilt, and drifts a little with it.
   const mag = Math.hypot(x, y);
@@ -29,15 +28,37 @@ function applyTilt(x, y) {
   deckEl.style.rotate = mag > 0.01 ? `${(-y).toFixed(3)} ${x.toFixed(3)} 0 ${(mag * 9).toFixed(2)}deg` : "";
   stageBg.style.translate = `${(-x * 16).toFixed(1)}px ${(-y * 10).toFixed(1)}px`;
   fairy.style.rotate = `${(x * 2.5).toFixed(2)}deg`;
-  // The bulbs swing in steps (their own transition smooths it): restyling every bulb every frame
-  // was one of the costs of tilting.
-  const sw = Math.round(-x * 6) * 2;
-  if (sw !== swung) {
-    swung = sw;
-    for (const e of document.querySelectorAll(".edison")) e.style.setProperty("--swing", `${sw}deg`);
-  }
   const spot = deck.top?.el.querySelector(".hotspot");
   if (spot) spot.style.transform = `translate(${(x * 45).toFixed(1)}%, ${(y * 40).toFixed(1)}%)`;
+  swingTo(-x * 14);
+}
+
+/**
+ * The bulbs hang like pendulums: they swing towards where "down" went, overshoot a little and
+ * settle. A small spring, stepped by real time, written only while it moves (one custom property
+ * per string of bulbs; the rotation itself is composited).
+ */
+const bulb = { a: 0, v: 0, to: 0, raf: 0, last: 0, shown: 0 };
+function swingTo(deg) {
+  bulb.to = deg;
+  if (!bulb.raf) {
+    bulb.last = 0;
+    bulb.raf = requestAnimationFrame(swing);
+  }
+}
+function swing(now) {
+  const dt = bulb.last ? Math.min(now - bulb.last, 48) / 1000 : 1 / 60;
+  bulb.last = now;
+  // Spring towards the target: ~1.1 s period, lightly damped (a bulb on a cord).
+  bulb.v += ((bulb.to - bulb.a) * 32 - bulb.v * 4.5) * dt;
+  bulb.a += bulb.v * dt;
+  if (Math.abs(bulb.a - bulb.shown) >= 0.05) {
+    bulb.shown = bulb.a;
+    const val = `${bulb.a.toFixed(2)}deg`;
+    for (const e of document.querySelectorAll(".edison")) e.style.setProperty("--swing", val);
+  }
+  if (Math.abs(bulb.to - bulb.a) < 0.05 && Math.abs(bulb.v) < 0.05) bulb.raf = 0;
+  else bulb.raf = requestAnimationFrame(swing);
 }
 
 const motionUsed = new Set();
@@ -60,6 +81,11 @@ function motionGesture(name) {
     feel("swoosh", "medium");
     deck.go(to, { x: name === "next" ? -900 : 900 });
     say("📳", name === "next" ? "FLICK! NEXT BOOK" : "FLICK! BACK ONE");
+  } else if (name === "shelfNext" || name === "shelfPrev") {
+    const k = ORDER.indexOf(shelf);
+    const to = ORDER[(k + (name === "shelfNext" ? 1 : ORDER.length - 1)) % ORDER.length];
+    switchShelf(to);
+    say("🎡", `TIP! ${SHELF[to].label}`);
   } else if (name === "add") {
     feel("pop", "success");
     openAdd();
@@ -91,7 +117,8 @@ function motionGuide() {
   return h(
     "div",
     { class: "mo-guide" },
-    move("flick", "FLICK SIDEWAYS", "Turn the phone quickly to face right and straight back, like turning a page: next book. Left: back one."),
+    move("flick", "FLICK SIDEWAYS", "Snap the phone to the right and straight back (turn it, or twist it like a dial): next book. Left: back one."),
+    move("tipping", "TIP", "Snap the top edge away from you and back: next shelf. Towards you: the shelf before."),
     move("lift", "BOUNCE", "A quick bounce up and down, like tapping the phone on an invisible table: add a book."),
     move("tilt", "TILT", "Just tilt: the pile leans, the lights swing, the cover catches the light."),
   );
@@ -113,7 +140,7 @@ export async function motionInvite({ fromSettings = false } = {}) {
     ],
     submit: () => enableMotion(),
   });
-  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, bounce, tilt", tone: "lime" });
+  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, tip, bounce, tilt", tone: "lime" });
   refreshMe();
 }
 

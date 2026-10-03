@@ -65,45 +65,60 @@ export function toDevice(r, axes) {
  * The gesture reader, kept apart from the sensors so it can be tested with recordings.
  * feed(t ms, rate {x, y, z} in degrees a second about the phone's axes, interval, sense?) → a
  * gesture name or null. sense is { v, h, g }: acceleration along gravity and across it (m/s²),
- * and which way gravity points (from bounceOf).
+ * and which way is down (pointing down; createGyro evens out the platforms).
  *
- * Tuned on recordings from a real iPhone (tests/fixtures/motion-iphone.json):
+ * Tuned on two recordings of real moves on an iPhone (tests/fixtures/motion-iphone*.json).
  *
- * A flick is a fast turn about the phone's top-to-bottom axis (40°+, peaking above 280°/s), then
- * the swing back. It fires as the swing back starts, once ~15° of it has happened. Wrists tip and
- * twist a lot during a flick to the left, so the other axes are ignored. Picking the phone up or
- * putting it down turns it the same way, so a flick only counts if the phone was held fairly
- * steady just before it, and doesn't move "down" further than the flick itself would.
+ * Every gesture is a quick snap and back. Slow turns (tilting to play with the light, twisting
+ * slowly, turning round as you walk) never count: in the recordings they stayed under 280°/s and
+ * took half a second or more, while snaps peaked at 290–890°/s within a third of a second.
  *
- * A bounce is a push up then down (or down then up) along gravity: two strong, opposite pushes
- * within ~0.45 s, each lasting long enough to really move the phone, while it hardly turns. A knock
- * on a table or setting the phone down is one short spike, so it doesn't count.
+ * - Flick sideways (books). Asked to "turn the phone to face right and back", people do one of
+ *   two things: turn it about its top-to-bottom axis (y), or snap it round like a steering
+ *   wheel (z). Both count. Right, or clockwise: next. Left, or anticlockwise: back one.
+ * - Tip the top edge away or towards you, and back (x): next or previous shelf.
+ * - Bounce (add a book): a push up then down (or down then up) along gravity, while the phone
+ *   hardly turns. A knock on a table or setting the phone down is one short spike: no.
+ *
+ * A snap is a stretch of turning one way (a "lobe") of 38°+ that peaks above 280°/s and lasts
+ * under 0.4 s; it fires as the swing back starts (15° into it). Wrists turn about more than one
+ * axis at once (a flick to the left also tips the top towards you by 60–80% as much), so the
+ * axis that turned furthest wins. Picking the phone up or putting it down turns it a lot too, so
+ * a snap only counts if the phone ended up held about the same way as half a second before (a
+ * quick snap before it is fine: it came back), and not within 1.5 s of lying still face up (on a
+ * table: you're picking it up or putting it down).
  *
  * After any gesture it waits until the phone has been calm for a moment (and at least half a
  * second), so the swing back or the bounce back never counts twice.
  */
 export function gestureReader({
-  need = 40, // degrees the flick has to turn
+  need = 38, // degrees a snap has to turn
   peak = 280, // degrees a second it has to reach
+  quick = 400, // ms it may take at most
   back = 15, // degrees of the swing back before it fires
-  backWithin = 700, // ms after the flick ends for the swing back to start
-  steady = 40, // how far (degrees) the phone may have moved in the 0.5 s before a flick
-  drift = 45, // how far "down" may move beyond what the flick itself explains
-  push = 9, // m/s² for each half of a bounce
-  impulse = 0.55, // m/s of speed each half must give the phone
+  backWithin = 700, // ms after the snap ends for the swing back to start
+  steady = 40, // how far (degrees) "down" may have moved over the 0.5 s before a snap
+  rested = 1500, // ms after lying still face up before a snap counts
+  drift = 45, // how far "down" may move beyond what the snap itself explains
+  push = 5.5, // m/s² for each half of a bounce
+  impulse = 0.6, // m/s of speed each half must give the phone
   pair = 450, // ms between the two halves
   spin = 220, // the phone hardly turning during a bounce: under this many degrees a second
-  settle = 60,
-  quiet = 120,
-  gap = 500,
+  settle = 150,
+  quiet = 40,
+  gap = 350,
 } = {}) {
   let last = 0;
   let armed = true;
   let firedAt = -1e9;
   let still = 0;
   const downs = []; // [t, unit gravity]: the last second of where down was
-  let lobe = null; // the current turn about y: { s, t, ang, pk, g, ok }
-  let out = null; // a finished flick waiting for its swing back: { s, end, g, ok, ang }
+  let restedAt = -1e9; // when the phone last lay still, face up
+  let restFrom = 0;
+  // Per axis: the current lobe { s, t, ang, pk, g, ok }, and the last finished snap waiting for
+  // its swing back { s, t, end, ang, g, ok }.
+  const lobes = { x: null, y: null, z: null };
+  const snaps = { x: null, y: null, z: null };
   let push1 = null; // the current push along gravity: { s, t, imp, pk, across }
   let half = null; // a finished strong push waiting for its opposite: { s, end, pk, across }
   let spun = 0; // fastest turn (any axis) during the current bounce
@@ -113,17 +128,15 @@ export function gestureReader({
     for (let i = downs.length - 1; i >= 0; i--) if (downs[i][0] <= t) return downs[i][1];
     return downs[0]?.[1];
   };
-  // The furthest down has wandered over [from, to].
-  const wander = (from, to, ref) => {
-    let m = 0;
-    for (const [t, g] of downs) if (t >= from && t <= to) m = Math.max(m, angle(g, ref));
-    return m;
+  // Which gesture a snap about each axis means, by the direction of the snap.
+  const meaning = { y: (s) => (s > 0 ? "next" : "prev"), z: (s) => (s < 0 ? "next" : "prev"), x: (s) => (s < 0 ? "shelfNext" : "shelfPrev") };
+  const reset = () => {
+    for (const k in lobes) lobes[k] = snaps[k] = null;
+    push1 = half = null;
   };
 
   return function feed(t, r, interval, sense) {
-    const x = +r?.x || 0;
-    const y = +r?.y || 0;
-    const z = +r?.z || 0;
+    const rate = { x: +r?.x || 0, y: +r?.y || 0, z: +r?.z || 0 };
     // The sensor says how often it reports; trust that over our clock (iPhone says it in seconds,
     // everyone else in milliseconds).
     const iv = interval > 0 && interval < 1 ? interval * 1000 : interval;
@@ -137,7 +150,12 @@ export function gestureReader({
       downs.push([t, [g.x / l, g.y / l, g.z / l]]);
       while (downs.length && t - downs[0][0] > 1200) downs.shift();
     }
-    const turning = Math.max(Math.abs(x), Math.abs(y), Math.abs(z));
+    const turning = Math.max(Math.abs(rate.x), Math.abs(rate.y), Math.abs(rate.z));
+    // Lying on a table: flat, face up, and stiller than any hand (for a fifth of a second).
+    const flat = g && downs[downs.length - 1][1][2] < -0.97 && turning < 10;
+    if (!flat) restFrom = 0;
+    else if (!restFrom) restFrom = t;
+    else if (t - restFrom >= 200) restedAt = t;
 
     if (!armed) {
       const calm = turning < settle && Math.abs(v) < 3;
@@ -145,7 +163,7 @@ export function gestureReader({
       else if (!still) still = t;
       if (still && t - still >= quiet && t - firedAt >= gap) {
         armed = true;
-        lobe = out = push1 = half = null;
+        reset();
       }
       return null;
     }
@@ -153,36 +171,54 @@ export function gestureReader({
       armed = false;
       still = 0;
       firedAt = t;
+      reset();
       return name;
     };
 
-    // Flicks: follow the turn about y, one stretch of the same sign (a "lobe") at a time.
-    const s = y > 40 ? 1 : y < -40 ? -1 : 0;
-    if (lobe && s !== lobe.s) {
-      // A lobe ends. Was it a flick?
-      if (Math.abs(lobe.ang) >= need && lobe.pk >= peak) out = { s: lobe.s, end: t, g: lobe.g, ok: lobe.ok, ang: Math.abs(lobe.ang) };
-      lobe = null;
+    // Snaps: follow each axis, one lobe at a time.
+    let ready = null; // a snap whose swing back has started: [axis, snap]
+    for (const k of ["x", "y", "z"]) {
+      const w = rate[k];
+      const s = w > 40 ? 1 : w < -40 ? -1 : 0;
+      let lobe = lobes[k];
+      if (lobe && s !== lobe.s) {
+        // A lobe ends. Was it a snap?
+        if (Math.abs(lobe.ang) >= need && lobe.pk >= peak && t - lobe.t <= quick) snaps[k] = { s: lobe.s, t: lobe.t, end: t, ang: Math.abs(lobe.ang), g: lobe.g, ok: lobe.ok };
+        lobe = lobes[k] = null;
+      }
+      if (s && !lobe) {
+        const g0 = downAt(t);
+        const was = downAt(t - 500);
+        // Held about the same way as half a second ago, and not just lifted off a table?
+        const ok = (!g0 || !was || angle(g0, was) < steady) && t - restedAt > rested;
+        lobe = lobes[k] = { s, t, ang: 0, pk: 0, g: g0, ok };
+      }
+      if (lobe) {
+        lobe.ang += w * dt;
+        lobe.pk = Math.max(lobe.pk, Math.abs(w));
+      }
+      const snap = snaps[k];
+      if (snap && t - snap.end > backWithin) snaps[k] = null;
+      else if (snap && lobe && lobe.s === -snap.s && Math.abs(lobe.ang) >= back && (!ready || snap.ang > ready[1].ang)) ready = [k, snap];
     }
-    if (s && !lobe) {
-      const g0 = downAt(t);
-      // Held steady over the half second before? (Not being picked up or put down.)
-      const ok = !g0 || wander(t - 500, t, g0) < steady;
-      lobe = { s, t, ang: 0, pk: 0, g: g0, ok };
-    }
-    if (lobe) {
-      lobe.ang += y * dt;
-      lobe.pk = Math.max(lobe.pk, Math.abs(y));
-    }
-    if (out && t - out.end > backWithin) out = null;
-    if (out && lobe && lobe.s === -out.s && Math.abs(lobe.ang) >= back) {
-      const now = downAt(t);
-      // Turning about y can only move "down" by as much as it has turned: if it has moved much
-      // further, the phone was also tipped (picked up or put down), not flicked.
-      const moved = out.g && now ? angle(out.g, now) : 0;
-      const home = moved < out.ang - Math.abs(lobe.ang) + drift;
-      const f = out;
-      out = null;
-      if (f.ok && home) return fire(f.s > 0 ? "next" : "prev");
+    if (ready) {
+      const [k, snap] = ready;
+      // Another axis turned further over the same moment: that's the real move, not this one.
+      const bigger = ["x", "y", "z"].some((j) => {
+        if (j === k) return false;
+        const o = snaps[j] || lobes[j];
+        const end = o?.end ?? t;
+        return o && end >= snap.t && o.t <= snap.end && Math.abs(o.ang) > snap.ang;
+      });
+      snaps[k] = null;
+      if (!bigger) {
+        const now = downAt(t);
+        // A turn can only move "down" by as much as it turned: if it moved much further, the
+        // phone was also being picked up or put down.
+        const moved = snap.g && now ? angle(snap.g, now) : 0;
+        const home = moved < snap.ang - Math.abs(lobes[k].ang) + drift;
+        if (snap.ok && home) return fire(meaning[k](snap.s));
+      }
     }
 
     // Bounces: the same idea along gravity. A strong push is remembered; the opposite push
@@ -201,10 +237,7 @@ export function gestureReader({
       push1.imp += Math.abs(v) * dt;
       push1.pk = Math.max(push1.pk, Math.abs(v));
       push1.across = Math.max(push1.across, across);
-      if (half && half.s === -push1.s && strong(push1) && push1.t - half.end <= pair && spun < spin && Math.max(half.across, push1.across) < 0.7 * Math.min(half.pk, push1.pk)) {
-        push1 = half = null;
-        return fire("add");
-      }
+      if (half && half.s === -push1.s && strong(push1) && push1.t - half.end <= pair && spun < spin && Math.max(half.across, push1.across) < 0.7 * Math.min(half.pk, push1.pk)) return fire("add");
     }
     if (half && t - half.end > pair) half = null;
     spun = Math.max(spun, turning);
@@ -259,6 +292,7 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
   const apple = isApple();
   const axes = apple ? AXES.apple : AXES.standard;
   let fromGravity = false; // once motion events say where down is, tilt comes from them
+  let baseAt = 0;
   let heard = -Infinity; // when the sensors last said something new
   let lastSig = "";
   // Real sensors always jitter a little; a reading that never changes (an emulator, or a browser
@@ -291,14 +325,19 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
   }
 
   // Tilt from where down is (motion events): smooth through upright.
-  function lean(g) {
-    // Safari on iPhone reports gravity pointing down; the standard has it pointing up.
-    const l = (apple ? 1 : -1) / Math.hypot(g.x, g.y, g.z);
+  function lean(g, now) {
+    const l = 1 / Math.hypot(g.x, g.y, g.z);
     const { side, back } = leanOf({ x: g.x * l, y: g.y * l, z: g.z * l });
+    const dt = baseAt ? clamp(now - baseAt, 0, 100) : 16;
+    baseAt = now;
     if (!base) base = { s: side, b: back };
-    base.s += (side - base.s) * 0.01;
-    base.b += wrap(back - base.b) * 0.01;
-    raw = [clamp((side - base.s) / 16, -1, 1), clamp(-wrap(back - base.b) / 22, -1, 1)];
+    // "Level" follows how you hold the phone, slowly (over ~4 s), so the scene answers to the
+    // phone's position, and still settles when you shift your grip for good.
+    const k = 1 - Math.exp(-dt / 4000);
+    base.s += (side - base.s) * k;
+    base.b += wrap(back - base.b) * k;
+    // Soft limits (tanh), so a big tilt eases to the edge instead of hitting a wall.
+    raw = [Math.tanh((side - base.s) / 18), Math.tanh(-wrap(back - base.b) / 24)];
     if (!raf) raf = requestAnimationFrame(paint);
   }
 
@@ -323,10 +362,12 @@ export function createGyro({ onTilt, onGesture, canGesture = () => true, tilt = 
     const g = e.accelerationIncludingGravity;
     if (r?.alpha != null || g?.x != null) hear(`m${r?.alpha},${r?.beta},${r?.gamma},${g?.x},${g?.y},${g?.z}`);
     const sense = bounceOf(e);
+    // Safari on iPhone reports gravity pointing down; the standard has it pointing up. Down, here.
+    if (sense && !apple) sense.g = { x: -sense.g.x, y: -sense.g.y, z: -sense.g.z };
     if (sense) {
       if (!fromGravity) base = null; // (level was learnt from the other kind of reading)
       fromGravity = true;
-      if (tilt()) lean(sense.g);
+      if (tilt()) lean(sense.g, now);
     }
     if (!canGesture()) {
       read = gestureReader(); // forget anything half-done

@@ -935,7 +935,7 @@ await run("pick an animal for your profile; it shows on the avatar and stays", a
   assert.equal(await page.textContent("#me-face"), "🦙");
 });
 
-await run("motion controls: flick for books, bounce to add, tilt to lean", async () => {
+await run("motion controls: flick for books, tip for shelves, bounce to add, tilt to lean", async () => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "no-preference", hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   try {
@@ -944,14 +944,15 @@ await run("motion controls: flick for books, bounce to add, tilt to lean", async
     await page.goto(SITE);
     await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
     await starter(page); // (the first tap is what lets an iPhone start the sensors)
-    // A flick as the gyroscope reports it: a quick turn about the top-to-bottom axis (gamma in the
-    // web standard), then the slower swing back.
-    const flick = (peak) =>
-      page.evaluate((peak) => {
-        const fire = (v) => dispatchEvent(new DeviceMotionEvent("devicemotion", { rotationRate: { alpha: 0, beta: 0, gamma: v }, interval: 16 }));
+    // A snap as the gyroscope reports it: a quick turn, then the slower swing back. In the web
+    // standard gamma is the top-to-bottom axis (flick), alpha through the screen (the
+    // steering-wheel flick), beta side to side (tip).
+    const flick = (peak, axis = "gamma") =>
+      page.evaluate(([peak, axis]) => {
+        const fire = (v) => dispatchEvent(new DeviceMotionEvent("devicemotion", { rotationRate: { alpha: 0, beta: 0, gamma: 0, [axis]: v }, interval: 16 }));
         for (let i = 0; i < 10; i++) fire(peak * Math.sin((Math.PI * (i + 0.5)) / 10));
         for (let i = 0; i < 20; i++) fire((-peak / 2) * Math.sin((Math.PI * (i + 0.5)) / 20));
-      }, peak);
+      }, [peak, axis]);
     // (events dispatched in one go share a timestamp, so settle with a still pause between moves)
     const still = () => page.evaluate(() => new Promise((ok) => {
       const id = setInterval(() => dispatchEvent(new DeviceMotionEvent("devicemotion", { rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 })), 16);
@@ -967,6 +968,17 @@ await run("motion controls: flick for books, bounce to add, tilt to lean", async
     await flick(120); // a little wobble is ignored
     await still();
     assert.equal((await app(page)).top, first);
+    await flick(-600, "alpha"); // the steering-wheel kind: clockwise is next
+    await page.waitForFunction((t) => globalThis.__shelfie.top !== t, first);
+    await still();
+    await flick(600, "alpha");
+    await page.waitForFunction((t) => globalThis.__shelfie.top === t, first);
+    await still();
+    // Tip the top edge away: the next shelf.
+    const shelf0 = (await app(page)).shelf;
+    await flick(-600, "beta");
+    await page.waitForFunction((s) => globalThis.__shelfie.shelf !== s, shelf0);
+    await still();
     // Bouncing the phone (held upright: gravity along y), up then down, adds a book.
     const bounce = () =>
       page.evaluate(() => {
@@ -977,15 +989,19 @@ await run("motion controls: flick for books, bounce to add, tilt to lean", async
     await page.waitForSelector("#panel-add[aria-hidden=false]");
     // No gestures while a panel is open.
     await still();
+    const before = await app(page);
     await flick(600);
+    await flick(-600, "beta");
     await page.waitForTimeout(400);
-    assert.equal((await app(page)).top, first);
+    assert.deepEqual(await app(page), before);
     await page.keyboard.press("Escape");
     await page.waitForSelector("#panel-add[aria-hidden=true]", { state: "attached" });
     // Tilt: from where gravity points, level first, then leaning right and back.
     for (let i = 0; i < 25; i++)
       await page.evaluate((i) => dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: 0, z: 0 }, accelerationIncludingGravity: i ? { x: 3, y: 8.6, z: 3.6 } : { x: 0, y: 9.8, z: 0 }, rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 })), i);
     await page.waitForFunction(() => /px$/.test(document.querySelector("#deck").style.translate) && document.querySelector("#deck").style.translate !== "0px 0px");
+    // The bulbs swing like pendulums, and come to rest.
+    await page.waitForFunction(() => Math.abs(parseFloat(document.querySelector(".edison")?.style.getPropertyValue("--swing") || "0")) > 1);
   } finally {
     await ctx.close();
   }

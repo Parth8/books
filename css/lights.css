@@ -28,8 +28,8 @@
   width: 18px;
   margin-left: -9px;
   transform-origin: 50% 0;
+  /* --swing comes from the tilt, as a pendulum (app/motion.js): no transition, it moves itself. */
   rotate: calc(var(--sway) + var(--swing, 0deg));
-  transition: rotate 0.9s cubic-bezier(.3, 1.4, .5, 1);
 }
 .ed-cord {
   display: block;
