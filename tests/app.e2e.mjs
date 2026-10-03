@@ -935,7 +935,7 @@ await run("pick an animal for your profile; it shows on the avatar and stays", a
   assert.equal(await page.textContent("#me-face"), "🦙");
 });
 
-await run("motion controls: flick for books, twist for shelves, flick up to add, tilt to lean", async () => {
+await run("motion controls: flick for books, bounce to add, tilt to lean", async () => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "no-preference", hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   try {
@@ -944,50 +944,80 @@ await run("motion controls: flick for books, twist for shelves, flick up to add,
     await page.goto(SITE);
     await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
     await starter(page); // (the first tap is what lets an iPhone start the sensors)
-    // A gesture as the gyroscope reports it: a quick turn about one axis, the swing back, then still.
-    const motion = (axis, peak) =>
-      page.evaluate(([axis, peak]) => {
-        const fire = (v) => dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: 0, z: 0 }, rotationRate: { alpha: 0, beta: 0, gamma: 0, [axis]: v }, interval: 16 }));
-        const n = 10;
-        for (let i = 0; i < n; i++) fire(peak * Math.sin((Math.PI * (i + 0.5)) / n));
-        for (let i = 0; i < n; i++) fire(-peak * Math.sin((Math.PI * (i + 0.5)) / n));
-      }, [axis, peak]);
+    // A flick as the gyroscope reports it: a quick turn about the top-to-bottom axis (gamma in the
+    // web standard), then the slower swing back.
+    const flick = (peak) =>
+      page.evaluate((peak) => {
+        const fire = (v) => dispatchEvent(new DeviceMotionEvent("devicemotion", { rotationRate: { alpha: 0, beta: 0, gamma: v }, interval: 16 }));
+        for (let i = 0; i < 10; i++) fire(peak * Math.sin((Math.PI * (i + 0.5)) / 10));
+        for (let i = 0; i < 20; i++) fire((-peak / 2) * Math.sin((Math.PI * (i + 0.5)) / 20));
+      }, peak);
     // (events dispatched in one go share a timestamp, so settle with a still pause between moves)
     const still = () => page.evaluate(() => new Promise((ok) => {
       const id = setInterval(() => dispatchEvent(new DeviceMotionEvent("devicemotion", { rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 })), 16);
       setTimeout(() => (clearInterval(id), ok()), 900);
     }));
     const first = (await app(page)).top;
-    await motion("gamma", 400);
+    await flick(600);
     await page.waitForFunction((t) => globalThis.__shelfie.top !== t, first);
     await still();
-    await motion("gamma", -400);
+    await flick(-600);
     await page.waitForFunction((t) => globalThis.__shelfie.top === t, first);
     await still();
-    await motion("gamma", 60); // a little wobble is ignored
+    await flick(120); // a little wobble is ignored
     await still();
     assert.equal((await app(page)).top, first);
-    await motion("alpha", -600);
-    await page.waitForFunction(() => globalThis.__shelfie.shelf === "want");
-    await still();
-    await motion("beta", 500);
+    // Bouncing the phone (held upright: gravity along y), up then down, adds a book.
+    const bounce = () =>
+      page.evaluate(() => {
+        const fire = (v) => dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: v, z: 0 }, accelerationIncludingGravity: { x: 0, y: 9.8 + v, z: 0 }, rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 }));
+        for (const s of [1, -1]) for (let i = 0; i < 9; i++) fire(s * 14 * Math.sin((Math.PI * (i + 0.5)) / 9));
+      });
+    await bounce();
     await page.waitForSelector("#panel-add[aria-hidden=false]");
     // No gestures while a panel is open.
     await still();
-    await motion("alpha", -600);
+    await flick(600);
     await page.waitForTimeout(400);
-    assert.equal((await app(page)).shelf, "want");
+    assert.equal((await app(page)).top, first);
     await page.keyboard.press("Escape");
     await page.waitForSelector("#panel-add[aria-hidden=true]", { state: "attached" });
-    // Bouncing the phone up (held upright: gravity along y) also adds a book.
-    await still();
-    await page.evaluate(() => {
-      for (const v of [3, 8, 11, 6, -4]) dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: v, z: 0 }, accelerationIncludingGravity: { x: 0, y: 9.8 + v, z: 0 }, rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 }));
-    });
-    await page.waitForSelector("#panel-add[aria-hidden=false]");
-    await page.keyboard.press("Escape");
-    for (let i = 0; i < 25; i++) await page.evaluate((i) => dispatchEvent(new DeviceOrientationEvent("deviceorientation", { alpha: 0, beta: i ? 60 : 45, gamma: i ? 18 : 0 })), i);
+    // Tilt: from where gravity points, level first, then leaning right and back.
+    for (let i = 0; i < 25; i++)
+      await page.evaluate((i) => dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: 0, y: 0, z: 0 }, accelerationIncludingGravity: i ? { x: 3, y: 8.6, z: 3.6 } : { x: 0, y: 9.8, z: 0 }, rotationRate: { alpha: 0, beta: 0, gamma: 0 }, interval: 16 })), i);
     await page.waitForFunction(() => /px$/.test(document.querySelector("#deck").style.translate) && document.querySelector("#deck").style.translate !== "0px 0px");
+  } finally {
+    await ctx.close();
+  }
+}, { raw: true });
+
+await run("motion switch in settings: turns on after the permission prompt, without leaving the screen", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "no-preference", hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  try {
+    await setup(page);
+    await page.addInitScript(() => {
+      localStorage.setItem("shelfie.fx", JSON.stringify({ visitors: false, motion: false }));
+      localStorage.setItem("shelfie.motionAsked", "1");
+      // iPhone's prompt, answered "Allow" after a moment.
+      const ask = () => new Promise((ok) => setTimeout(() => ok("granted"), 300));
+      DeviceOrientationEvent.requestPermission = ask;
+      DeviceMotionEvent.requestPermission = ask;
+    });
+    await page.goto(SITE);
+    await page.waitForFunction(() => globalThis.__shelfie?.pile.length >= 1);
+    await starter(page);
+    await page.click("#me");
+    const row = '.me-row[aria-label="MOTION CONTROLS"]';
+    assert.equal(await page.getAttribute(row, "aria-checked"), "false");
+    await page.click(row);
+    await page.click('.pop-btn[data-id="on"]');
+    await page.waitForSelector(".pop", { state: "detached" });
+    await page.waitForFunction((row) => document.querySelector(row).getAttribute("aria-checked") === "true", row, { timeout: 3000 });
+    assert.ok(await page.locator(`${row} .switch.on`).count());
+    // And off again.
+    await page.click(row);
+    assert.equal(await page.getAttribute(row, "aria-checked"), "false");
   } finally {
     await ctx.close();
   }

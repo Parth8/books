@@ -37,7 +37,6 @@
   background: var(--pink);
 }
 .mo-phone.flick { animation: mo-flick 1.6s cubic-bezier(.5, 0, .2, 1) infinite; }
-.mo-phone.twist { animation: mo-twist 1.8s cubic-bezier(.5, 0, .2, 1) infinite; }
 .mo-phone.lift { animation: mo-lift 1.6s cubic-bezier(.5, 0, .2, 1) infinite; }
 .mo-phone.tilt { animation: mo-tilt 3s ease-in-out infinite alternate; }
 @keyframes mo-flick {
@@ -45,14 +44,10 @@
   45% { transform: perspective(200px) rotateY(50deg); }
   62% { transform: perspective(200px) rotateY(-6deg); }
 }
-@keyframes mo-twist {
-  0%, 30%, 100% { transform: none; }
-  50% { transform: rotate(-40deg); }
-}
 @keyframes mo-lift {
   0%, 30%, 100% { transform: none; }
   40% { transform: translateY(-12px); }
-  52% { transform: translateY(4px); }
+  52% { transform: translateY(8px); }
   62% { transform: translateY(-2px); }
 }
 @keyframes mo-tilt {

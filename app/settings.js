@@ -51,17 +51,22 @@ function switchRow(icon, title, text, pref) {
 /** Motion controls: switching on asks permission (in the tap), and shows the moves. */
 function motionRow() {
   const sw = h("span", { class: `switch${fx.motion ? " on" : ""}`, "aria-hidden": "true" }, h("i"));
-  const b = h("button", { type: "button", class: "me-row", role: "switch", "aria-checked": String(fx.motion), "aria-label": "MOTION CONTROLS" }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: "📳" }), h("span", { class: "me-row-text" }, h("b", { text: "MOTION CONTROLS" }), h("small", { text: "Turn the phone sideways and back for the next book, twist for the next shelf, bounce it to add. Tilt to play with the light." })), sw);
-  b.addEventListener("click", () => {
+  const b = h("button", { type: "button", class: "me-row", role: "switch", "aria-checked": String(fx.motion), "aria-label": "MOTION CONTROLS" }, h("span", { class: "me-row-icon", "aria-hidden": "true", text: "📳" }), h("span", { class: "me-row-text" }, h("b", { text: "MOTION CONTROLS" }), h("small", { text: "Flick the phone sideways and back for the next book, bounce it to add one. Tilt to play with the light." })), sw);
+  // The switch shows what's true, whichever way it changed (here, or from the pop-up).
+  const show = () => {
+    sw.classList.toggle("on", !!fx.motion);
+    b.setAttribute("aria-checked", String(!!fx.motion));
+  };
+  b.addEventListener("click", async () => {
     if (fx.motion) {
       fx.set("motion", false);
       gyro.stop();
-      sw.classList.remove("on");
-      b.setAttribute("aria-checked", "false");
+      show();
       feel("click", "select");
       return;
     }
-    motionInvite({ fromSettings: true });
+    await motionInvite({ fromSettings: true });
+    show();
   });
   return b;
 }

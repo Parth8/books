@@ -1,4 +1,4 @@
-// Motion controls: tilt the phone and the scene moves; flicks and twists are gestures (js/gyro.js reads them).
+// Motion controls: tilt the phone and the scene moves; flicks and bounces are gestures (js/gyro.js reads them).
 
 import { h, $, buzz, prefersReducedMotion } from "../js/util.js";
 import { feel, fx } from "../js/sfx.js";
@@ -6,7 +6,7 @@ import { popup } from "../js/modal.js";
 import { tip } from "../js/tips.js";
 import { createGyro, motionSupported, askMotion } from "../js/gyro.js";
 import { add, openAdd, row } from "./adding.js";
-import { book, deck, deckEl, island, opensSoFar, ORDER, SHELF, shelf, switchShelf } from "./boot.js";
+import { book, deck, deckEl, island, opensSoFar } from "./boot.js";
 import { posterUp } from "./celebrate.js";
 import { fairy, start } from "./dock.js";
 import { imp } from "./import.js";
@@ -60,11 +60,6 @@ function motionGesture(name) {
     feel("swoosh", "medium");
     deck.go(to, { x: name === "next" ? -900 : 900 });
     say("📳", name === "next" ? "FLICK! NEXT BOOK" : "FLICK! BACK ONE");
-  } else if (name === "shelfNext" || name === "shelfPrev") {
-    const k = ORDER.indexOf(shelf);
-    const to = ORDER[(k + (name === "shelfNext" ? 1 : ORDER.length - 1)) % ORDER.length];
-    switchShelf(to);
-    say("🎡", `TWIST! ${SHELF[to].label}`);
   } else if (name === "add") {
     feel("pop", "success");
     openAdd();
@@ -90,15 +85,14 @@ async function enableMotion() {
   return true;
 }
 
-/** The guide: three moves, drawn as little animated phones. */
+/** The guide: the moves, drawn as little animated phones. */
 function motionGuide() {
   const move = (cls, title, text) => h("div", { class: "mo-row" }, h("span", { class: `mo-phone ${cls}`, "aria-hidden": "true" }, h("i")), h("span", {}, h("b", { text: title }), h("small", { text })));
   return h(
     "div",
     { class: "mo-guide" },
-    move("flick", "FLICK SIDEWAYS", "Turn the phone quickly to face right and back, like turning a page: next book. Left: back one."),
-    move("twist", "TWIST", "Turn it like a steering wheel: one shelf along (the other way: one back)."),
-    move("lift", "BOUNCE", "Bounce the phone up or down, or flick its top towards you and back: add a book."),
+    move("flick", "FLICK SIDEWAYS", "Turn the phone quickly to face right and straight back, like turning a page: next book. Left: back one."),
+    move("lift", "BOUNCE", "A quick bounce up and down, like tapping the phone on an invisible table: add a book."),
     move("tilt", "TILT", "Just tilt: the pile leans, the lights swing, the cover catches the light."),
   );
 }
@@ -119,7 +113,7 @@ export async function motionInvite({ fromSettings = false } = {}) {
     ],
     submit: () => enableMotion(),
   });
-  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, twist, bounce, tilt", tone: "lime" });
+  if (res === "on" || res?.id === "on") island.say({ icon: "📳", title: "MOTION ON", sub: "Flick, bounce, tilt", tone: "lime" });
   refreshMe();
 }
 

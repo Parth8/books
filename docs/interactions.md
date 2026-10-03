@@ -59,16 +59,16 @@ Switch on You → Settings → **Motion controls** (iPhone asks for permission, 
 
 | Move | What it does |
 |---|---|
-| **Flick** the phone right / left: turn it to face right or left and back, like turning a page | Next / previous book |
-| **Twist** it like a steering wheel | One shelf along (twist the other way: one back) |
-| **Bounce** it up or down, or flick its top towards or away from you | Add a book |
+| **Flick** the phone right / left: turn it to face right or left and straight back, like turning a page | Next / previous book |
+| **Bounce** it: a quick bounce up and down | Add a book |
 | **Tilt** | The pile leans in 3D, the background shifts the other way, the bulbs and fairy lights swing, and a hotspot of light slides across the cover |
 
 - **Learning the moves.** A guide with little animated phones shows each move. The first couple of times you use a move, the island says what it did.
-- **One move, one step.** After each move Shelfie waits until the phone has been still for a moment (and at least 0.8 s), so the swing back never counts as a move the other way, and a wobbly twist is still one shelf.
-- **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open.
-- **How moves are read.** Turns come from the gyroscope, summed over the last quarter second: a move needs about 28° of turn, clearly about one axis. A bounce comes from the accelerometer, measured along gravity, so it works however you hold the phone.
-- **iPhone's axes.** Safari on iPhone reports the three turning speeds in a different order from the web standard (which is why a front-and-back flick used to change the shelf). Shelfie maps them per platform, then double-checks the mapping against the phone's own tilt readings while you use it, and remembers what it learnt on this device.
+- **One move, one step.** After each move Shelfie waits until the phone has been calm for a moment (and at least half a second), so the swing back or the bounce back never counts again.
+- **When moves are ignored.** While you're dragging, typing, or have a panel, pop-up or poster open; and when the phone is being picked up or put down.
+- **Why only two moves.** The rules were tuned on recordings from a real iPhone (`tests/fixtures/motion-iphone.json`). Twisting for shelves was dropped because walking while turning looked the same, and tipping the top towards you because picking the phone up looked the same.
+- **How moves are read.** See [performance.md](performance.md#motion-gestures).
+- **iPhone's axes.** Safari on iPhone reports the three turning speeds in a different order from the web standard. Shelfie maps them per platform; the recordings confirmed the iPhone order.
 
 ## Goals
 

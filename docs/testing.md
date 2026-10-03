@@ -20,7 +20,7 @@ Options for the browser tests:
 |---|---|
 | `tests/store.test.mjs` | The rules: books, reading log, XP, levels, streaks, badges, merging |
 | `tests/search.test.mjs` | Turning search answers into books |
-| `tests/gyro.test.mjs` | Reading motion gestures from gyroscope numbers: flicks, twists, tips, and that the swing back or a wobble never counts |
+| `tests/gyro.test.mjs` | Reading motion gestures: replays a recording from a real iPhone (`tests/fixtures/motion-iphone.json`), so flicks and bounces must fire and walking, picking up or slow tilting must not |
 | `tests/worker.test.mjs` | The Worker: key handling, redaction, origin checks, rate limits, fallback, the sync store |
 | `tests/sync.test.mjs` | Sync codes and encryption |
 | `tests/goodreads.test.mjs` | Goodreads CSV parsing, importing, names, reset |

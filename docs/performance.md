@@ -42,19 +42,26 @@ The point of these rules is to keep every effect, not to cut them. Each effect i
 
 ## Motion gestures
 
-Phone gestures are read from the **gyroscope** (how fast the phone is turning), not the accelerometer.
+The rules come from recordings of real moves on an iPhone, made with a hidden test page (`motion-lab.html`, removed before launch). The recording is kept as a test fixture, `tests/fixtures/motion-iphone.json`, and the tests replay it.
 
-- A push shows up in the accelerometer mixed with gravity, hand shake and the bounce back. That's why flicks used to be slow, missed, and sometimes read backwards.
-- Turning shows up cleanly and immediately.
+**Flick (next / previous book)** comes from the **gyroscope** (how fast the phone turns), which is clean and immediate.
 
-How a gesture is read:
+1. Shelfie follows the turn about the phone's top-to-bottom axis.
+2. A flick is at least 40° of turn, peaking above 280°/s. In the recording real flicks were 53–119° at 290–890°/s; normal handling stayed under 25°.
+3. It fires as the swing back starts (about 15° into it), roughly a quarter of a second after the flick began.
+4. The other axes are ignored: a flick to the left also tips the phone's top towards you by 60–80% as much.
+5. Picking the phone up or putting it down turns it the same way. So a flick only counts if the phone was held fairly steady (within 40°) over the half second before.
 
-1. Shelfie adds up how far the phone turned about each axis over the last quarter second.
-2. A move needs about 28° of turn, clearly about one axis.
-3. Its first half sets the direction.
-4. Then it waits for the phone to settle, so the swing back never counts as a move the other way.
+**Bounce (add a book)** comes from the **accelerometer**, measured along gravity so it works however you hold the phone.
 
-The reader is a pure function (`gestureReader` in `js/gyro.js`), unit-tested with gyroscope-shaped numbers.
+- A bounce is two strong pushes in opposite directions (each above 9 m/s² and long enough to really move the phone) within 0.45 s, while the phone hardly turns.
+- Setting the phone down, or knocking it, is one short spike, so it doesn't count.
+
+After any move, Shelfie waits until the phone is calm again, so the swing back never counts.
+
+**Tilt** comes from which way gravity points, not from the orientation event's angles. Those angles are Euler angles: when you hold the phone upright they jump (one swings by 180°), which made the pile lurch.
+
+The reader is a pure function (`gestureReader` in `js/gyro.js`). The tests replay the recording and check each step: every flick right gives "next", every flick left "previous", bouncing gives "add". Holding the phone still, slow tilting, walking, putting it down and picking it up, scrolling, and the dropped twist and tip moves give nothing.
 
 ## What can't be measured here
 
